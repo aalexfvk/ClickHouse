@@ -1,9 +1,10 @@
 #include "DiskObjectStorageVFS.h"
-#include "DiskObjectStorageVFSTransaction.h"
-#include "IO/S3Common.h"
-#include "Interpreters/Context.h"
-#include "VFSGarbageCollector.h"
-#include "VFSMigration.h"
+
+#include <Disks/ObjectStorages/DiskObjectStorageVFSTransaction.h>
+#include <Disks/ObjectStorages/VFSGarbageCollector.h>
+#include <Disks/ObjectStorages/VFSMigration.h>
+#include <IO/S3Common.h>
+#include <Interpreters/Context.h>
 #if USE_AZURE_BLOB_STORAGE
 #    include <azure/storage/common/storage_exception.hpp>
 #endif
@@ -34,8 +35,24 @@ DiskObjectStorageVFS::DiskObjectStorageVFS(
     if (send_metadata)
         throw Exception(ErrorCodes::BAD_ARGUMENTS, "VFS doesn't support send_metadata");
     zookeeper()->createAncestors(nodes.log_item);
+    snapshot_storage = std::make_unique<VFSSnapshotStorageFromS3>(object_storage, makeSnapshotStoragePrefix(), *settings.get());
 
     log = getLogger(fmt::format("DiskVFS({})", name));
+}
+
+String DiskObjectStorageVFS::makeSnapshotStoragePrefix() const
+{
+    String delim = "/";
+    // Azure blob storage does not work correctly with slashes in names
+    // (at least in integration tests)
+    if (object_storage_type == ObjectStorageType::Azure)
+        delim = "_";
+
+    String snapshots_prefix = "vfs" + delim + name + delim + "snapshots" + delim;
+    if (!object_key_prefix.empty())
+        snapshots_prefix = object_key_prefix + snapshots_prefix;
+
+    return snapshots_prefix;
 }
 
 DiskObjectStoragePtr DiskObjectStorageVFS::createDiskObjectStorage()
