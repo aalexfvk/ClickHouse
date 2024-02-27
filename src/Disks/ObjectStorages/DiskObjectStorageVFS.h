@@ -3,7 +3,7 @@
 #include <Disks/ObjectStorages/DiskObjectStorage.h>
 #include <Disks/ObjectStorages/VFSGarbageCollector.h>
 #include <Disks/ObjectStorages/VFSSettings.h>
-#include <Disks/ObjectStorages/VFSSnapshotStorageFromS3.h>
+#include <Disks/ObjectStorages/VFSSnapshotObjectStorage.h>
 #include <Common/MultiVersion.h>
 #include <Common/ZooKeeper/ZooKeeperWithFaultInjection.h>
 
@@ -37,7 +37,6 @@ public:
 
     bool tryDownloadMetadata(std::string_view remote_from, const String & to);
     void uploadMetadata(std::string_view remote_to, const String & from);
-    VFSSnapshotStoragePtr getSnapshotStorage() { return snapshot_storage; }
 
 private:
     friend struct DiskObjectStorageVFSTransaction;

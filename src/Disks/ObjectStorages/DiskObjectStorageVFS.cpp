@@ -35,24 +35,18 @@ DiskObjectStorageVFS::DiskObjectStorageVFS(
     if (send_metadata)
         throw Exception(ErrorCodes::BAD_ARGUMENTS, "VFS doesn't support send_metadata");
     zookeeper()->createAncestors(nodes.log_item);
-    snapshot_storage = std::make_unique<VFSSnapshotStorageFromS3>(object_storage, makeSnapshotStoragePrefix(), *settings.get());
+    snapshot_storage = std::make_unique<VFSSnapshotObjectStorage>(object_storage, makeSnapshotStoragePrefix(), *settings.get());
 
     log = getLogger(fmt::format("DiskVFS({})", name));
 }
 
 String DiskObjectStorageVFS::makeSnapshotStoragePrefix() const
 {
-    String delim = "/";
+    String res = fmt::format("vfs/{}/snapshots/", name);
     // Azure blob storage does not work correctly with slashes in names
-    // (at least in integration tests)
     if (object_storage_type == ObjectStorageType::Azure)
-        delim = "_";
-
-    String snapshots_prefix = "vfs" + delim + name + delim + "snapshots" + delim;
-    if (!object_key_prefix.empty())
-        snapshots_prefix = object_key_prefix + snapshots_prefix;
-
-    return snapshots_prefix;
+        std::ranges::replace(res, '/', '_');
+    return object_key_prefix + res;
 }
 
 DiskObjectStoragePtr DiskObjectStorageVFS::createDiskObjectStorage()

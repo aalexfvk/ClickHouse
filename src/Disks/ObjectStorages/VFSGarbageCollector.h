@@ -26,8 +26,9 @@ private:
         int32_t version;
     };
 
-    LockNode getOptimisticLock(FaultyKeeper) const;
-    bool releaseOptimisticLock(FaultyKeeper zookeeper, const LockNode & lock_node, Coordination::Requests ops) const;
+    LockNode getOptimisticLock() const;
+    // Execute requests in transaction with checking if lock_node was modified
+    bool releaseOptimisticLock(const LockNode & lock_node, Coordination::Requests & ops) const;
     String generateSnapshotName() const;
 
     DiskObjectStorageVFS & storage;
@@ -37,7 +38,8 @@ private:
 
     void run() const;
     bool skipRun(size_t batch_size, Logpointer start, Logpointer end) const;
-    void updateSnapshotWithLogEntries(Logpointer start, Logpointer end, String old_snapshot_name, String new_snapshot_name) const;
+    void updateSnapshotWithLogEntries(
+        Logpointer start, Logpointer end, const String & old_snapshot_name, const String & new_snapshot_name) const;
     VFSLogItem getBatch(Logpointer start, Logpointer end) const;
     Coordination::Requests makeRemoveBatchRequests(Logpointer start, Logpointer end) const;
     String getNode(Logpointer ptr) const;

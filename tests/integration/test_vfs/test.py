@@ -36,7 +36,7 @@ def started_cluster(request):
         cluster.shutdown()
 
 
-def test_gc_delete_unlinked_objects(started_cluster):
+def test_gc_remove_obsolete(started_cluster):
     node_1: ClickHouseInstance = started_cluster.instances["node_1"]
     bucket = started_cluster.minio_bucket
     minio = started_cluster.minio_client
@@ -59,7 +59,7 @@ def test_gc_delete_unlinked_objects(started_cluster):
     # Unlink all files related to the table
     node_1.query(f"DROP TABLE {table} SYNC")
     # Wait one GC iteration
-    time.sleep(GC_SLEEP_SEC)
+    time.sleep(GC_SLEEP_SEC * 1.5)
 
     bucket_objects = {
         obj.object_name for obj in minio.list_objects(bucket, "data/", recursive=True)
@@ -82,7 +82,7 @@ def test_optimistic_lock(started_cluster):
     node_1.query(f"INSERT INTO {table} VALUES (0)")
 
     # Wait one GC iteration
-    time.sleep(GC_SLEEP_SEC)
+    time.sleep(GC_SLEEP_SEC * 1.5)
 
     # VFS log items was processed by node_2 replica
     node_1.wait_for_log_line(
