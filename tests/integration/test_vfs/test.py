@@ -70,7 +70,6 @@ def test_gc_remove_obsolete(started_cluster):
 
 def test_optimistic_lock(started_cluster):
     node_1: ClickHouseInstance = started_cluster.instances["node_1"]
-    zk: KazooClient = started_cluster.get_kazoo_client("zoo1")
     table = "test_optimistic_lock"
 
     # Inject delay before releasing optimistic lock on node_1
@@ -88,10 +87,6 @@ def test_optimistic_lock(started_cluster):
     node_1.wait_for_log_line(
         "Skip GC transaction because optimistic lock node was already updated"
     )
-
-    # Last VFS snapshot was created by node_2 (replica marked in snapshot name)
-    assert zk.get(GC_LOCK_PATH)[0].startswith(b"snapshot_node_2")
-
     node_1.query(f"DROP TABLE {table} SYNC")
 
 

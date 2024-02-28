@@ -18,7 +18,7 @@ def get_remote_pathes(node, table_name, only_remote_path=True):
         WHERE
             local_path LIKE '%{uuid}%'
             AND local_path NOT LIKE '%format_version.txt%'
-        ORDER BY ALL
+        ORDER BY remote_path;
         """
         )
         .strip()
