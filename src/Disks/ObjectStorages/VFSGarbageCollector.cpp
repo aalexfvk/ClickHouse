@@ -5,6 +5,7 @@
 #include <Common/FailPoint.h>
 #include <Common/ProfileEvents.h>
 #include <Common/Stopwatch.h>
+#include <Common/ZooKeeper/ZooKeeperLock.h>
 
 
 namespace ProfileEvents
@@ -34,6 +35,7 @@ VFSGarbageCollector::VFSGarbageCollector(DiskObjectStorageVFS & storage_, Backgr
 {
     LOG_INFO(log, "GC started");
 
+    createLockNodes(storage.zookeeper());
     *static_cast<BackgroundSchedulePoolTaskHolder *>(this) = pool.createTask(
         log->name(),
         [this]
@@ -52,6 +54,12 @@ VFSGarbageCollector::VFSGarbageCollector(DiskObjectStorageVFS & storage_, Backgr
     (*this)->activateAndSchedule();
 }
 
+void VFSGarbageCollector::createLockNodes(FaultyKeeper zookeeper) const
+{
+    zookeeper->createAncestors(storage.nodes.gc_lock);
+    zookeeper->createIfNotExists(storage.nodes.gc_lock, "");
+}
+
 VFSGarbageCollector::LockNode VFSGarbageCollector::getOptimisticLock() const
 {
     auto zookeeper = storage.zookeeper();
@@ -68,8 +76,7 @@ VFSGarbageCollector::LockNode VFSGarbageCollector::getOptimisticLock() const
     {
         if (e.code == Coordination::Error::ZNONODE)
         {
-            zookeeper->createAncestors(gc_lock_path);
-            zookeeper->createIfNotExists(gc_lock_path, "");
+            createLockNodes(zookeeper);
             value = zookeeper->get(gc_lock_path, &stat);
         }
         else
@@ -114,10 +121,18 @@ void VFSGarbageCollector::run() const
 {
     Stopwatch stop_watch;
 
-    // TODO(alexfvk): We can add acquiring of pessimistic lock here as an optimization
+    // Acquire pessimistic lock here as an optimization
     // to reduce the probability of clashes between replicas, but not rely on it
+    // TODO: templatize ZooKeeperLock to support ZooKeeperWithFaultInjection
+    zkutil::ZooKeeperLock lock(storage.zookeeper()->getKeeper(), storage.nodes.gc_lock, "lock");
+    if (!lock.tryLock())
+    {
+        LOG_DEBUG(log, "Skipped run due to pessimistic lock is already acquired");
+        return;
+    }
+
     auto lock_node = getOptimisticLock();
-    LOG_DEBUG(log, "Acquired lock");
+    LOG_DEBUG(log, "GC acquired optimistic lock");
 
     bool successful_run = false, skip_run = false;
     SCOPE_EXIT({

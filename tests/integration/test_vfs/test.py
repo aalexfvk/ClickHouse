@@ -22,12 +22,14 @@ def started_cluster(request):
             main_configs=["configs/config.xml"],
             with_zookeeper=True,
             with_minio=True,
+            stay_alive=True
         )
         cluster.add_instance(
             "node_2",
             main_configs=["configs/config.xml"],
             with_zookeeper=True,
             with_minio=True,
+            stay_alive=True
         )
         cluster.start()
 
@@ -70,7 +72,11 @@ def test_gc_remove_obsolete(started_cluster):
 
 def test_optimistic_lock(started_cluster):
     node_1: ClickHouseInstance = started_cluster.instances["node_1"]
+    node_2: ClickHouseInstance = started_cluster.instances["node_2"]
+    zk = started_cluster.get_kazoo_client("zoo1")
     table = "test_optimistic_lock"
+    # Stop second node to prevent interfering
+    node_2.stop_clickhouse()
 
     # Inject delay before releasing optimistic lock on node_1
     # that vfs log has been processed by node_2
@@ -80,14 +86,19 @@ def test_optimistic_lock(started_cluster):
     node_1.query(f"CREATE TABLE {table} (i UInt32) ENGINE=MergeTree ORDER BY i")
     node_1.query(f"INSERT INTO {table} VALUES (0)")
 
-    # Wait one GC iteration
-    time.sleep(GC_SLEEP_SEC * 1.5)
+    node_1.wait_for_log_line("GC acquired optimistic lock")
 
-    # VFS log items was processed by node_2 replica
+    # Update lock node version
+    lock_node_value, _ = zk.get(GC_LOCK_PATH)
+    zk.set(GC_LOCK_PATH, lock_node_value)
+
     node_1.wait_for_log_line(
         "Skip GC transaction because optimistic lock node was already updated"
     )
+
     node_1.query(f"DROP TABLE {table} SYNC")
+    node_1.query("SYSTEM DISABLE FAILPOINT vfs_gc_optimistic_lock_delay")
+    node_2.start_clickhouse()
 
 
 # TODO myrrc check possible errors on merge and move
@@ -134,7 +145,7 @@ def test_ch_disks(started_cluster):
         user="root",
     )
     print(listing)
-    assert listing == "default\nreacquire\nreconcile\n"
+    assert listing == "default\nreacquire\n"
 
     listing = node.exec_in_container(
         [
@@ -143,7 +154,7 @@ def test_ch_disks(started_cluster):
             "--config-file=/etc/clickhouse-server/config.xml",
             "--loglevel=trace",
             "--save-logs",
-            "--disk=reconcile",
+            "--disk=reacquire",
             "list",
             "/",
         ],

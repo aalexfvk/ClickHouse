@@ -44,5 +44,6 @@ private:
     Coordination::Requests makeRemoveBatchRequests(Logpointer start, Logpointer end) const;
     String getNode(Logpointer ptr) const;
     void cleanSnapshots(const String & current_snapshot, const Strings & all_snapshots) const;
+    void createLockNodes(FaultyKeeper zookeeper) const;
 };
 }
