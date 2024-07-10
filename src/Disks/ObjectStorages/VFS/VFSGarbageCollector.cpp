@@ -68,13 +68,7 @@ void VFSGarbageCollector::initGCState() const
 {
     auto zookeeper = getZookeeper();
     auto path = settings.zk_gc_path + "/garbage_collector";
-    if (zookeeper->tryCreate(path, "", zkutil::CreateMode::Persistent) == Coordination::Error::ZOK)
-    {
-        SnapshotMetadata empty_snaphot;
-        auto [new_shapshot_write_buffer, new_object] = getShapshotWriteBufferAndSnaphotObject(empty_snaphot);
-
-        updateShapshotMetadata({new_object.remote_path}, 0);
-    }
+    zookeeper->tryCreate(path, "", zkutil::CreateMode::Persistent);
 }
 
 
@@ -85,10 +79,7 @@ void VFSGarbageCollector::run() const
     /// Optimization to reduce probability of clashes between replicas
     /// TODO alexfvk: templatize ZooKeeperLock to support ZooKeeperWithFaultInjection
     auto lock = zkutil::createSimpleZooKeeperLock(
-        getZookeeper()->getKeeper(),
-        settings.zk_gc_path + "/garbage_collector",
-        "lock",
-        fmt::format("garbare_collector_run"));
+        getZookeeper()->getKeeper(), settings.zk_gc_path + "/garbage_collector", "lock", fmt::format("garbare_collector_run"));
     if (!lock->tryLock())
     {
         LOG_DEBUG(log, "Skipped run due to pessimistic lock already acquired");
@@ -109,7 +100,7 @@ String VFSGarbageCollector::getZKSnapshotPath() const
 }
 
 
-SnapshotMetadata VFSGarbageCollector::getCurrentSnapshotObjectPath() const
+SnapshotMetadata VFSGarbageCollector::getSnapshotMetadata() const
 {
     auto zk_shapshot_metadata_path = getZKSnapshotPath();
     auto zookeeper = getZookeeper();
@@ -122,9 +113,6 @@ SnapshotMetadata VFSGarbageCollector::getCurrentSnapshotObjectPath() const
 
     if (error == Coordination::Error::ZOK)
         return SnapshotMetadata::deserialize(content, stat.version);
-    //  if no zk node with metadata yet, then it's first run of garbage collector.
-    if (error == Coordination::Error::ZNONODE)
-        return SnapshotMetadata();
 
     throw Coordination::Exception(error);
 }
@@ -141,7 +129,7 @@ ZooKeeperWithFaultInjectionPtr VFSGarbageCollector::getZookeeper() const
 
 std::unique_ptr<ReadBuffer> VFSGarbageCollector::getShapshotReadBuffer(const SnapshotMetadata & snapshot_meta) const
 {
-    if (snapshot_meta.object_storage_key.size() && snapshot_meta.total_size)
+    if (!snapshot_meta.is_initial_snaphot)
     {
         StoredObject object(snapshot_meta.object_storage_key, "", snapshot_meta.total_size);
         // to do read settings.
@@ -151,7 +139,8 @@ std::unique_ptr<ReadBuffer> VFSGarbageCollector::getShapshotReadBuffer(const Sna
     return std::make_unique<ReadBufferFromEmptyFile>();
 }
 
-std::pair<std::unique_ptr<WriteBuffer>, StoredObject> VFSGarbageCollector::getShapshotWriteBufferAndSnaphotObject(const SnapshotMetadata & snapshot_meta) const
+std::pair<std::unique_ptr<WriteBuffer>, StoredObject>
+VFSGarbageCollector::getShapshotWriteBufferAndSnaphotObject(const SnapshotMetadata & snapshot_meta) const
 {
     String new_object_path = fmt::format("/vfs_shapshots/shapshot_{}", snapshot_meta.znode_version + 1);
     auto new_object_key = object_storage->generateObjectKeyForPath(new_object_path);
@@ -185,7 +174,7 @@ void VFSGarbageCollector::updateShapshotMetadata(const SnapshotMetadata & new_sn
 
 void VFSGarbageCollector::updateSnapshot() const
 {
-    SnapshotMetadata snapshot_meta = getCurrentSnapshotObjectPath();
+    SnapshotMetadata snapshot_meta = getSnapshotMetadata();
 
     /// For most of object stroges (like s3 or azure) we don't need the object path, it's generated randomly.
     /// But other ones reqiested to set it manually.
@@ -197,20 +186,18 @@ void VFSGarbageCollector::updateSnapshot() const
     if (wal_items_batch.size() == 0ul)
     {
         LOG_DEBUG(log, "Merge snapshot exit due to empty wal.");
+        return;
     }
 
     LOG_DEBUG(log, "Merge snapshot with {} entries from wal.", wal_items_batch.size());
     auto entires_to_remove = mergeWithWals(wal_items_batch, *shapshot_read_buffer, *new_shapshot_write_buffer);
 
     SnapshotMetadata new_snaphot_meta(new_object.remote_path);
+
+    removeShapshotEntires(entires_to_remove);
     updateShapshotMetadata(new_snaphot_meta, snapshot_meta.znode_version);
-    /// When new snaphot commited, old entries can be removed.
-    /// TODO: Here we must remove in fault-tolerance way. So if the ch-server will be restarted at this point,
-    /// old objects should be scheduled for deletion. removal.
-    {
-        removeShapshotEntires(entires_to_remove);
-        alog.dropUpTo(max_entry_index + 1);
-    }
+    alog.dropUpTo(max_entry_index + 1);
+
     LOG_DEBUG(
         log,
         "Snapshot update finished with removing {} from object storage and new shapshot key {}",
