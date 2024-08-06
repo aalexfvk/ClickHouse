@@ -2,8 +2,8 @@
 #include <Disks/ObjectStorages/IObjectStorage.h>
 #include "AppendLog.h"
 #include "IO/ReadHelpers.h"
-#include "VFSShapshotMetadata.h"
 #include "VFSLog.h"
+#include "VFSShapshotMetadata.h"
 
 #include <fstream>
 #include <optional>
@@ -12,16 +12,62 @@
 #include <IO/ReadBufferFromString.h>
 #include <fmt/chrono.h>
 
+#include <Poco/JSON/JSON.h>
+#include <Poco/JSON/Object.h>
+#include <Poco/JSON/Parser.h>
+#include <Poco/JSON/Stringifier.h>
 
 namespace DB
 {
 
 struct VFSSnapshotEntry
 {
+    VFSSnapshotEntry(Poco::JSON::Object::Ptr data_json_)
+        : data_json(data_json_)
+        , remote_path(data_json->getValue<String>("remote_path"))
+        , link_count(data_json->getValue<Int32>("link_count"))
+    {
+    }
+
+    VFSSnapshotEntry(const String & remote_path_) : data_json(new Poco::JSON::Object()), remote_path(remote_path_), link_count(0)
+    {
+        /// Init json required fields
+        data_json->set("remote_path", remote_path);
+        data_json->set("link_count", link_count);
+
+        data_json->set("links", Poco::JSON::Object::Ptr(new Poco::JSON::Object()));
+    }
+
+    /// Json Structure:
+    /// {
+    ///     remote_path : String
+    ///     link_count : int
+    ///     links : vectors per hosts
+    ///     {
+    ///         WAL_ID : vector of links per_each_wal
+    ///         {
+    ///             local_path : Status
+    ///             {
+    ///                 status : {}
+    ///                 timestamp : {}
+    ///                 WAL_ID_index : index
+    ///             }
+    ///             ...
+    ///         }
+    ///         WAL_ID2 {}
+    ///         ...
+    ///     }
+    /// }
+    Poco::JSON::Object::Ptr data_json;
     String remote_path;
-    Int32 link_count = 0;
+    Int32 link_count;
+
+    bool isAlive() const { return link_count > 0; }
+    void updateWithVFSItems(const VFSLogItems & items_batch);
+    void updateWithVFSItem(const VFSLogItem & item);
 
     bool operator==(const VFSSnapshotEntry & entry) const;
+
     static std::optional<VFSSnapshotEntry> deserialize(ReadBuffer & buf);
     void serialize(WriteBuffer & buf) const;
 };
@@ -41,7 +87,7 @@ public:
     SnapshotMetadata mergeWithWals(VFSLogItems && wal_items, const SnapshotMetadata & old_snapshot_meta);
 
 private:
-    void writeEntryInSnaphot(const VFSSnapshotEntry & entry, WriteBuffer & write_buffer, VFSSnapshotEntries & entries_to_remove);
+    void writeEntryOrAddToRemove(const VFSSnapshotEntry & entry, WriteBuffer & write_buffer, VFSSnapshotEntries & entries_to_remove);
     VFSSnapshotEntries mergeWithWalsImpl(VFSLogItems && wal_items, ReadBuffer & read_buffer, WriteBuffer & write_buffer);
 
     LoggerPtr log;
@@ -51,7 +97,7 @@ protected:
     virtual void removeShapshotEntires(const VFSSnapshotEntries & entires_to_remove) = 0;
     virtual std::unique_ptr<ReadBuffer> getShapshotReadBuffer(const SnapshotMetadata & snapshot_meta) const = 0;
     virtual std::pair<std::unique_ptr<WriteBuffer>, String>
-    getShapshotWriteBufferAndSnaphotObject(const SnapshotMetadata & snapshot_meta) const = 0;
+    getShapshotWriteBufferAndsnapshotObject(const SnapshotMetadata & snapshot_meta) const = 0;
 };
 
 class VFSSnapshotDataFromObjectStorage : public VFSSnapshotDataBase
@@ -66,7 +112,7 @@ protected:
     void removeShapshotEntires(const VFSSnapshotEntries & entires_to_remove) override;
     std::unique_ptr<ReadBuffer> getShapshotReadBuffer(const SnapshotMetadata & snapshot_meta) const override;
     std::pair<std::unique_ptr<WriteBuffer>, String>
-    getShapshotWriteBufferAndSnaphotObject(const SnapshotMetadata & snapshot_meta) const override;
+    getShapshotWriteBufferAndsnapshotObject(const SnapshotMetadata & snapshot_meta) const override;
 
 private:
     ObjectStoragePtr object_storage;

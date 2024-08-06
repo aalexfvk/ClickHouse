@@ -16,7 +16,7 @@ struct SnapshotMetadata
     String object_storage_key;
     uint64_t total_size;
     int32_t znode_version;
-    bool is_initial_snaphot;
+    bool is_initial_snapshot;
 
     SnapshotMetadata(
         uint64_t metadata_version_ = 0ull,
@@ -28,7 +28,7 @@ struct SnapshotMetadata
         , object_storage_key(object_storage_key_)
         , total_size(total_size_)
         , znode_version(znode_version_)
-        , is_initial_snaphot(is_initial_)
+        , is_initial_snapshot(is_initial_)
     {
     }
 
@@ -42,7 +42,7 @@ struct SnapshotMetadata
         , object_storage_key(object_storage_key_)
         , total_size(total_size_)
         , znode_version(znode_version_)
-        , is_initial_snaphot(is_initial_)
+        , is_initial_snapshot(is_initial_)
     {
     }
 
@@ -54,10 +54,10 @@ struct SnapshotMetadata
     {
         SnapshotMetadata result;
         result.znode_version = znode_version;
-        /// In case of initial snaphot, the content will be empty.
+        /// In case of initial snapshot, the content will be empty.
         if (str.empty())
         {
-            result.is_initial_snaphot = true;
+            result.is_initial_snapshot = true;
             return result;
         }
         ReadBufferFromString rb(str);
@@ -67,7 +67,7 @@ struct SnapshotMetadata
         readStringUntilWhitespace(result.object_storage_key, rb);
         checkChar(' ', rb);
         readIntTextUnsafe(result.total_size, rb);
-        result.is_initial_snaphot = false;
+        result.is_initial_snapshot = false;
         return result;
     }
 };

@@ -14,8 +14,12 @@ class VFSSnapshotDataFromString : public DB::VFSSnapshotDataBase
 public:
     VFSSnapshotDataFromString() = default;
 
-    void setSnaphotData(String str) { old_snapshot_data = str; }
-    String getSnapshotdata() const { return new_snaphot_data; }
+    void rotateData()
+    {
+        old_snapshot_data = new_snapshot_data;
+        new_snapshot_data = "";
+    }
+    String getSnapshotData() const { return new_snapshot_data; }
     VFSSnapshotEntries getEnriesToRemoveAfterLastMerge() const { return latest_entires_to_remove; }
 
 protected:
@@ -23,10 +27,10 @@ protected:
     {
         return std::unique_ptr<ReadBuffer>(new ReadBufferFromString(old_snapshot_data));
     }
-    std::pair<std::unique_ptr<WriteBuffer>, String> getShapshotWriteBufferAndSnaphotObject(const SnapshotMetadata &) const override
+    std::pair<std::unique_ptr<WriteBuffer>, String> getShapshotWriteBufferAndsnapshotObject(const SnapshotMetadata &) const override
     {
         String key_placeholed = "test";
-        auto write_buffer = std::unique_ptr<WriteBuffer>(new WriteBufferFromString(new_snaphot_data));
+        auto write_buffer = std::unique_ptr<WriteBuffer>(new WriteBufferFromString(new_snapshot_data));
         return {std::move(write_buffer), key_placeholed};
     }
 
@@ -34,117 +38,314 @@ protected:
 
 private:
     String old_snapshot_data;
-    mutable String new_snaphot_data;
+    mutable String new_snapshot_data;
     VFSSnapshotEntries latest_entires_to_remove;
 };
 
 
-String convertSnaphotEntiesToString(const VFSSnapshotEntries & entries)
+struct LinkDescription
 {
-    String serialized;
+    UUID wal;
+    String local_path;
+    VFSAction action;
+
+    bool operator==(const LinkDescription & rhs) const { return wal == rhs.wal && local_path == rhs.local_path && action == rhs.action; }
+    friend bool operator<(const LinkDescription & l, const LinkDescription & r);
+};
+
+struct ReableVFSEntry
+{
+    String remote_path;
+    Int32 links_count;
+    std::vector<LinkDescription> links;
+
+    static ReableVFSEntry createFromVFSEntry(VFSSnapshotEntry & entry)
     {
-        WriteBufferFromString wb(serialized);
-        for (const auto & entry : entries)
+        ReableVFSEntry res;
+        res.remote_path = entry.remote_path;
+        res.links_count = entry.link_count;
+        auto links_obj = entry.data_json->getObject("links");
+        for (String wal_id : links_obj->getNames())
         {
-            entry.serialize(wb);
+            auto wal_obj = links_obj->getObject(wal_id);
+            for (String local_path : wal_obj->getNames())
+            {
+                auto local_path_object = wal_obj->getObject(local_path);
+                auto status_from_entry = static_cast<VFSAction>(local_path_object->getValue<std::underlying_type_t<VFSAction>>("status"));
+                res.links.push_back({parse<UUID>(wal_id), local_path, status_from_entry});
+            }
         }
+        return res;
     }
-    return serialized;
+    bool operator==(const ReableVFSEntry & rhs) const
+    {
+        return remote_path == rhs.remote_path && links_count == rhs.links_count && links == rhs.links;
+    }
+    friend bool operator<(const ReableVFSEntry & l, const ReableVFSEntry & r);
+};
+
+bool operator<(const LinkDescription & l, const LinkDescription & r)
+{
+    if (l.wal != r.wal)
+        return l.wal < r.wal;
+    if (l.local_path != r.local_path)
+        return l.local_path < r.local_path;
+
+    return l.action < r.action;
+}
+bool operator<(const ReableVFSEntry & l, const ReableVFSEntry & r)
+{
+    if (l.remote_path != r.remote_path)
+        return l.remote_path < r.remote_path;
+
+    if (l.links_count != r.links_count)
+        return l.links_count < r.links_count;
+    return l.links < r.links;
 }
 
-TEST(DiskObjectStorageVFS, SnaphotEntriesSerialization)
+using ReableVFSEntries = std::vector<ReableVFSEntry>;
+
+std::ostream & operator<<(std::ostream & os, const ReableVFSEntries & entries)
 {
-    VFSSnapshotEntries entries = {{"/b", 1}, {"/a", 1}};
-
-    String serialized = convertSnaphotEntiesToString(entries);
-
-    String expected_serialized = "/b 1\n/a 1\n";
-    EXPECT_EQ(expected_serialized, serialized);
-
-    VFSSnapshotEntries deserialized;
+    size_t ind = 0;
+    for (const auto & e : entries)
     {
-        ReadBufferFromString rb(serialized);
-
-        while (auto entry = VFSSnapshotEntry::deserialize(rb))
+        os << "Entry : " << ind++ << "\n";
+        os << e.remote_path << "\n";
+        os << e.links_count << "\n";
+        for (const auto & link : e.links)
         {
-            deserialized.emplace_back(*entry);
+            os << toString(link.wal) << " " << link.local_path << " " << static_cast<UInt32>(link.action) << "\n";
         }
     }
-    EXPECT_EQ(deserialized.size(), entries.size());
-    EXPECT_EQ(deserialized, entries);
+    return os;
 }
 
-TEST(DiskObjectStorageVFS, ExceptionOnUnsortedSnapshot)
+void checkSnapshotState(String snapshot_data, ReableVFSEntries & entries)
 {
-    VFSSnapshotEntries entries = {{"/b", 1}, {"/a", 1}, {"/c", 2}};
+    ReadBufferFromString rb(snapshot_data);
+    ReableVFSEntries entries_from_snapshot;
+    auto vfs_entry = VFSSnapshotEntry::deserialize(rb);
+    while (vfs_entry)
+    {
+        entries_from_snapshot.push_back(ReableVFSEntry::createFromVFSEntry(*vfs_entry));
+        vfs_entry = VFSSnapshotEntry::deserialize(rb);
+    }
+    std::sort(entries_from_snapshot.begin(), entries_from_snapshot.end());
+    std::sort(entries.begin(), entries.end());
+
+    // std::cout << "entries_from_snapshot\n" << entries_from_snapshot << "\n";
+    // std::cout << "entries\n" << entries << "\n";
+
+    EXPECT_EQ(entries_from_snapshot, entries);
+}
+
+void checkSnaphotEntries(VFSSnapshotEntries snapshot_entries, ReableVFSEntries & entries)
+{
+    ReableVFSEntries entries_from_snapshot;
+    for (auto & entry : snapshot_entries)
+    {
+        entries_from_snapshot.push_back(ReableVFSEntry::createFromVFSEntry(entry));
+    }
+
+    std::sort(entries_from_snapshot.begin(), entries_from_snapshot.end());
+    std::sort(entries.begin(), entries.end());
+
+    // std::cout << "entries_from_snapshot\n" << entries_from_snapshot << "\n";
+    // std::cout << "entries\n" << entries << "\n";
+
+    EXPECT_EQ(entries_from_snapshot, entries);
+}
+
+const UUID TEST_WAL_ID_1 = parse<UUID>("00000000-0000-0000-0000-000000000001");
+const UUID TEST_WAL_ID_2 = parse<UUID>("00000000-0000-0000-0000-000000000002");
+
+
+VFSLogItem createLogItem(
+    String remote_path,
+    String local_path,
+    VFSAction action,
+    UUID id = TEST_WAL_ID_1,
+    Poco::Timestamp timestamp = 0,
+    String replica = "a.net",
+    UInt64 index = 0)
+{
+    return {{remote_path, local_path, {}, timestamp, action}, {replica, id, index}};
+}
+
+TEST(DiskObjectStorageVFS, CheckInternalRepresenatation)
+{
+    String snapshot_state = "{\"link_count\":1,\"links\":{\"00000000-0000-0000-0000-000000000001\":{\"\\/"
+                            "local\":{\"status\":0,\"timestamp\":0,\"vfs_log_index\":0}}},\"remote_path\":\"\\/a\"}\n";
+
+    ReableVFSEntries expected_state = {{"/a", 1, {{TEST_WAL_ID_1, "/local", VFSAction::LINK}}}};
+    checkSnapshotState(snapshot_state, expected_state);
+}
+
+TEST(DiskObjectStorageVFS, SimpleCheckSerializationLink)
+{
+    VFSLogItems items = {createLogItem("/a", "/local", VFSAction::LINK)};
+
     VFSSnapshotDataFromString snapshot_data;
-    snapshot_data.setSnaphotData(convertSnaphotEntiesToString(entries));
+    SnapshotMetadata placeholder_metadata;
+    {
+        snapshot_data.rotateData();
+        snapshot_data.mergeWithWals(std::move(items), placeholder_metadata);
 
+        auto to_remove = snapshot_data.getEnriesToRemoveAfterLastMerge();
+        VFSSnapshotEntries expected_entries_to_remove = {};
+
+        EXPECT_EQ(expected_entries_to_remove, to_remove);
+        items = {};
+    }
+
+    ReableVFSEntries expected_state = {{"/a", 1, {{TEST_WAL_ID_1, "/local", VFSAction::LINK}}}};
+    checkSnapshotState(snapshot_data.getSnapshotData(), expected_state);
+}
+
+TEST(DiskObjectStorageVFS, ExceptionOnUnlinkNonExistingPath)
+{
+    VFSLogItems items = {createLogItem("/a", "/local", VFSAction::UNLINK)};
+
+    VFSSnapshotDataFromString snapshot_data;
     SnapshotMetadata placeholder_metadata;
 
-    EXPECT_THROW(auto new_snapshot = snapshot_data.mergeWithWals({}, placeholder_metadata), Exception) << "Snaphot is unsorted";
+    snapshot_data.rotateData();
+    EXPECT_THROW(snapshot_data.mergeWithWals(std::move(items), placeholder_metadata), Exception);
 }
 
-// TEST(DiskObjectStorageVFS, MergeWalWithSnaphot)
-// {
-//     WALItems wals = {{"/c", 1}, {"/d", 2}, {"/b", 1}};
+TEST(DiskObjectStorageVFS, ReplcaceLinkAfterRequest)
+{
+    VFSLogItems items;
+    VFSSnapshotDataFromString snapshot_data;
+    SnapshotMetadata placeholder_metadata;
+    {
+        items = {{{"/a", "/local", WALInfo{"", TEST_WAL_ID_2, 0}, 0, VFSAction::REQUEST}, {"", TEST_WAL_ID_1, 0}}};
 
-//     String expected_snaphot_state;
-//     VFSSnapshotDataFromString snapshot_data;
-//     SnapshotMetadata placeholder_metadata;
-//     {
-//         snapshot_data.setSnaphotData("");
-//         snapshot_data.mergeWithWals(wals, placeholder_metadata);
+        snapshot_data.rotateData();
+        snapshot_data.mergeWithWals(std::move(items), placeholder_metadata);
 
-//         auto to_remove = snapshot_data.getEnriesToRemoveAfterLastMerge();
-//         VFSSnapshotEntries expected_entries_to_remove = {};
+        auto to_remove = snapshot_data.getEnriesToRemoveAfterLastMerge();
+        VFSSnapshotEntries expected_entries_to_remove = {};
 
-//         EXPECT_EQ(expected_entries_to_remove, to_remove);
-//     }
-//     expected_snaphot_state = "/b 1\n/c 1\n/d 2\n";
-//     EXPECT_EQ(expected_snaphot_state, snapshot_data.getSnapshotdata());
+        EXPECT_EQ(expected_entries_to_remove, to_remove);
+        items = {};
+    }
+    {
+        items = {{{"/a", "/local", {}, 0, VFSAction::LINK}, {"", TEST_WAL_ID_2, 0}}};
+        snapshot_data.rotateData();
+        snapshot_data.mergeWithWals(std::move(items), placeholder_metadata);
 
-//     wals = {{"/c", -1}, {"/d", -1}, {"/d", -1}, {"/e", -1}, {"/e", 1}, {"/f", 1}, {"/f", 1}, {"/f", -1}, {"/f", 1}};
-//     {
-//         snapshot_data.setSnaphotData(expected_snaphot_state);
-//         snapshot_data.mergeWithWals(wals, placeholder_metadata);
+        auto to_remove = snapshot_data.getEnriesToRemoveAfterLastMerge();
+        VFSSnapshotEntries expected_entries_to_remove = {};
 
-//         auto to_remove = snapshot_data.getEnriesToRemoveAfterLastMerge();
-//         VFSSnapshotEntries expected_entries_to_remove = {{"/c", 0}, {"/d", 0}, {"/e", 0}};
+        EXPECT_EQ(expected_entries_to_remove, to_remove);
+        items = {};
+    }
 
-//         EXPECT_EQ(expected_entries_to_remove, to_remove);
-//     }
-//     expected_snaphot_state = "/b 1\n/f 2\n";
-//     EXPECT_EQ(expected_snaphot_state, snapshot_data.getSnapshotdata());
 
-//     wals = {
-//         {"/a", 1},
-//         {"/b", 1},
-//         {"/c", 1},
-//     };
+    ReableVFSEntries expected_state = {{"/a", 1, {{TEST_WAL_ID_2, "/local", VFSAction::LINK}}}};
+    checkSnapshotState(snapshot_data.getSnapshotData(), expected_state);
+}
 
-//     {
-//         snapshot_data.setSnaphotData(expected_snaphot_state);
+TEST(DiskObjectStorageVFS, LinkUnlinkSameFile)
+{
+    VFSLogItems items = {createLogItem("/a", "/local", VFSAction::LINK), createLogItem("/a", "/local", VFSAction::UNLINK)};
 
-//         snapshot_data.mergeWithWals(wals, placeholder_metadata);
-//         auto to_remove = snapshot_data.getEnriesToRemoveAfterLastMerge();
-//         VFSSnapshotEntries expected_entries_to_remove;
+    VFSSnapshotDataFromString snapshot_data;
+    SnapshotMetadata placeholder_metadata;
+    {
+        snapshot_data.rotateData();
+        snapshot_data.mergeWithWals(std::move(items), placeholder_metadata);
 
-//         EXPECT_EQ(expected_entries_to_remove, to_remove);
-//     }
-//     expected_snaphot_state = "/a 1\n/b 2\n/c 1\n/f 2\n";
-//     EXPECT_EQ(expected_snaphot_state, snapshot_data.getSnapshotdata());
+        auto to_remove = snapshot_data.getEnriesToRemoveAfterLastMerge();
+        ReableVFSEntries expected_entries_to_remove = {{"/a", 0, {{TEST_WAL_ID_1, "/local", VFSAction::UNLINK}}}};
 
-//     wals = {{"/a", -1}, {"/b", -2}, {"/c", -1}, {"/f", -2}};
-//     {
-//         snapshot_data.setSnaphotData(expected_snaphot_state);
-//         snapshot_data.mergeWithWals(wals, placeholder_metadata);
+        checkSnaphotEntries(to_remove, expected_entries_to_remove);
+        items = {};
+    }
+    ReableVFSEntries expected_state = {};
+    checkSnapshotState(snapshot_data.getSnapshotData(), expected_state);
+}
 
-//         auto to_remove = snapshot_data.getEnriesToRemoveAfterLastMerge();
-//         VFSSnapshotEntries expected_entries_to_remove = {{"/a", 0}, {"/b", 0}, {"/c", 0}, {"/f", 0}};
 
-//         EXPECT_EQ(expected_entries_to_remove, to_remove);
-//     }
-//     expected_snaphot_state = "";
-//     EXPECT_EQ(expected_snaphot_state, snapshot_data.getSnapshotdata());
-// }
+TEST(DiskObjectStorageVFS, MergeWalWithsnapshot)
+{
+    VFSLogItems items;
+    ReableVFSEntries expected_state;
+    VFSSnapshotDataFromString snapshot_data;
+    SnapshotMetadata placeholder_metadata;
+
+    items
+        = {createLogItem("/b", "/local", VFSAction::LINK),
+           createLogItem("/a", "/local", VFSAction::LINK),
+           createLogItem("/a", "/local1", VFSAction::LINK),
+           createLogItem("/c", "/local2", VFSAction::LINK),
+           createLogItem("/c", "/local", VFSAction::LINK)};
+
+    {
+        snapshot_data.rotateData();
+        snapshot_data.mergeWithWals(std::move(items), placeholder_metadata);
+
+        auto to_remove = snapshot_data.getEnriesToRemoveAfterLastMerge();
+        ReableVFSEntries expected_entries_to_remove = {};
+
+        checkSnaphotEntries(to_remove, expected_entries_to_remove);
+        items = {};
+    }
+    expected_state
+        = {{"/b", 1, {{TEST_WAL_ID_1, "/local", VFSAction::LINK}}},
+           {"/a", 2, {{TEST_WAL_ID_1, "/local", VFSAction::LINK}, {TEST_WAL_ID_1, "/local1", VFSAction::LINK}}},
+           {"/c", 2, {{TEST_WAL_ID_1, "/local", VFSAction::LINK}, {TEST_WAL_ID_1, "/local2", VFSAction::LINK}}}};
+    checkSnapshotState(snapshot_data.getSnapshotData(), expected_state);
+
+
+    items
+        = {createLogItem("/b", "/local", VFSAction::UNLINK),
+           createLogItem("/a", "/local1", VFSAction::UNLINK),
+           createLogItem("/c", "/local3", VFSAction::LINK)};
+
+    {
+        snapshot_data.rotateData();
+        snapshot_data.mergeWithWals(std::move(items), placeholder_metadata);
+
+        auto to_remove = snapshot_data.getEnriesToRemoveAfterLastMerge();
+        ReableVFSEntries expected_entries_to_remove = {{"/b", 0, {{TEST_WAL_ID_1, "/local", VFSAction::UNLINK}}}};
+
+        checkSnaphotEntries(to_remove, expected_entries_to_remove);
+        items = {};
+    }
+    expected_state
+        = {{"/a", 1, {{TEST_WAL_ID_1, "/local", VFSAction::LINK}, {TEST_WAL_ID_1, "/local1", VFSAction::UNLINK}}},
+           {"/c",
+            3,
+            {{TEST_WAL_ID_1, "/local", VFSAction::LINK},
+             {TEST_WAL_ID_1, "/local2", VFSAction::LINK},
+             {TEST_WAL_ID_1, "/local3", VFSAction::LINK}}}};
+    checkSnapshotState(snapshot_data.getSnapshotData(), expected_state);
+
+    items
+        = {createLogItem("/a", "/local", VFSAction::UNLINK),
+           createLogItem("/c", "/local", VFSAction::UNLINK),
+           createLogItem("/c", "/local2", VFSAction::UNLINK),
+           createLogItem("/c", "/local3", VFSAction::UNLINK)};
+
+    {
+        snapshot_data.rotateData();
+        snapshot_data.mergeWithWals(std::move(items), placeholder_metadata);
+
+        auto to_remove = snapshot_data.getEnriesToRemoveAfterLastMerge();
+        ReableVFSEntries expected_entries_to_remove
+            = {{"/a", 0, {{TEST_WAL_ID_1, "/local", VFSAction::UNLINK}, {TEST_WAL_ID_1, "/local1", VFSAction::UNLINK}}},
+               {"/c",
+                0,
+                {{TEST_WAL_ID_1, "/local", VFSAction::UNLINK},
+                 {TEST_WAL_ID_1, "/local2", VFSAction::UNLINK},
+                 {TEST_WAL_ID_1, "/local3", VFSAction::UNLINK}}}};
+
+        checkSnaphotEntries(to_remove, expected_entries_to_remove);
+        items = {};
+    }
+    expected_state = {};
+    checkSnapshotState(snapshot_data.getSnapshotData(), expected_state);
+}

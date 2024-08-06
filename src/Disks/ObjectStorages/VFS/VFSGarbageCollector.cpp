@@ -147,11 +147,11 @@ void VFSGarbageCollector::updateSnapshot()
     }
     LOG_DEBUG(log, "Merge snapshot with {} entries from wal.", wal_items_batch.size());
 
-    auto new_snaphot_meta = vfs_shapshot_data.mergeWithWals(std::move(wal_items_batch), snapshot_meta);
+    auto new_snapshot_meta = vfs_shapshot_data.mergeWithWals(std::move(wal_items_batch), snapshot_meta);
 
-    updateShapshotMetadata(new_snaphot_meta, snapshot_meta.znode_version);
+    updateShapshotMetadata(new_snapshot_meta, snapshot_meta.znode_version);
     wal.dropUpTo(wal_items_batch.back().wal.index + 1);
 
-    LOG_DEBUG(log, "Snapshot update finished with new shapshot key {}", new_snaphot_meta.object_storage_key);
+    LOG_DEBUG(log, "Snapshot update finished with new shapshot key {}", new_snapshot_meta.object_storage_key);
 }
 }

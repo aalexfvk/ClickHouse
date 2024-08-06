@@ -42,6 +42,10 @@ struct VFSLogItem
     VFSEvent event;
     WALInfo wal;
 
+    UUID getDestinationWalId() const { return ((event.action == VFSAction::REQUEST) ? event.orig_wal->id : wal.id); }
+
+    UInt64 getDestinationWalIndex() const { return ((event.action == VFSAction::REQUEST) ? event.orig_wal->index : wal.index); }
+
     bool operator==(const VFSLogItem &) const = default;
 };
 
