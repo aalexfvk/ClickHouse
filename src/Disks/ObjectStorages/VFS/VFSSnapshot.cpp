@@ -18,7 +18,10 @@ namespace DB
 namespace ErrorCodes
 {
 extern const int LOGICAL_ERROR;
+extern const int CORRUPTED_DATA;
 }
+
+const char VFS_SHAPSHOT_ENTRIES_DELIMITER = '\n';
 
 bool VFSSnapshotEntry::operator==(const VFSSnapshotEntry & entry) const
 {
@@ -30,37 +33,132 @@ std::optional<VFSSnapshotEntry> VFSSnapshotEntry::deserialize(ReadBuffer & buf)
     if (buf.eof())
         return std::nullopt;
 
-    VFSSnapshotEntry entry;
+    String entry_string;
+    readStringUntilNewlineInto(entry_string, buf);
 
-    readStringUntilWhitespace(entry.remote_path, buf);
-    checkChar(' ', buf);
-    readIntTextUnsafe(entry.link_count, buf);
-    checkChar('\n', buf);
+    Poco::JSON::Parser parser;
+    auto entry_json = parser.parse(entry_string).extract<Poco::JSON::Object::Ptr>();
 
+    if (!entry_json->has("remote_path") || !entry_json->has("link_count"))
+        throw Exception(ErrorCodes::CORRUPTED_DATA, "Incomplete VFS log item");
+
+    VFSSnapshotEntry entry(entry_json);
+    checkChar(VFS_SHAPSHOT_ENTRIES_DELIMITER, buf);
     return entry;
 }
 
 void VFSSnapshotEntry::serialize(WriteBuffer & buf) const
 {
-    writeString(fmt::format("{} {}\n", remote_path, link_count), buf);
+    std::ostringstream oss; // STYLE_CHECK_ALLOW_STD_STRING_STREAM
+    oss.exceptions(std::ios::failbit);
+    Poco::JSON::Stringifier::stringify(data_json, oss);
+
+    writeString(oss.str(), buf);
+    writeChar(VFS_SHAPSHOT_ENTRIES_DELIMITER, buf);
 }
 
 
-void VFSSnapshotDataBase::writeEntryInSnaphot(
+void VFSSnapshotEntry::updateWithVFSItem(const VFSLogItem & item)
+{
+    auto links_object = data_json->getObject("links");
+
+    if (item.event.action == VFSAction::REQUEST || item.event.action == VFSAction::LINK)
+    {
+        if (!links_object->has(toString(item.getDestinationWalId())))
+        {
+            links_object->set(toString(item.getDestinationWalId()), Poco::JSON::Object::Ptr(new Poco::JSON::Object()));
+        }
+        auto wal_object = links_object->getObject(toString(item.getDestinationWalId()));
+
+        if (!wal_object->has("replica_name"))
+        {
+            wal_object->set("replica_name", item.getDestinationReplicaName());
+        }
+
+        if (!wal_object->has(item.event.local_path))
+        {
+            Poco::JSON::Object::Ptr local_path_object = new Poco::JSON::Object();
+            wal_object->set(item.event.local_path, local_path_object);
+            local_path_object->set("status", static_cast<std::underlying_type_t<VFSAction>>(item.event.action));
+            local_path_object->set("timestamp", item.event.timestamp.epochMicroseconds());
+            local_path_object->set("vfs_log_index", item.getDestinationWalIndex());
+            link_count++;
+            data_json->set("link_count", link_count);
+        }
+        else
+        {
+            auto local_path_object = wal_object->getObject(item.event.local_path);
+            auto status_from_entry = static_cast<VFSAction>(local_path_object->getValue<std::underlying_type_t<VFSAction>>("status"));
+
+            if (status_from_entry == VFSAction::UNLINK || (status_from_entry == VFSAction::REQUEST && item.event.action == VFSAction::LINK))
+            {
+                local_path_object->set("status", static_cast<std::underlying_type_t<VFSAction>>(item.event.action));
+                local_path_object->set("timestamp", item.event.timestamp.epochMicroseconds());
+                local_path_object->set("vfs_log_index", item.getDestinationWalIndex());
+                return;
+            }
+
+            throw DB::Exception(
+                ErrorCodes::LOGICAL_ERROR,
+                "Snapshot already contains entry for remote_path: {} vfs_log_id: {}, local_path {}",
+                item.event.remote_path,
+                item.getDestinationWalId(),
+                item.event.local_path);
+        }
+    }
+    else if (item.event.action == VFSAction::UNLINK)
+    {
+        if (!links_object->has(toString(item.getDestinationWalId())))
+        {
+            throw DB::Exception(
+                ErrorCodes::LOGICAL_ERROR,
+                "Snapshot doesn't contains vfs_log_id object in entry for remote_path: {} vfs_log_id: {}, local_path {}",
+                item.event.remote_path,
+                item.getDestinationWalId(),
+                item.event.local_path);
+        }
+        auto wal_object = links_object->getObject(toString(item.getDestinationWalId()));
+        if (!wal_object->has(item.event.local_path))
+        {
+            throw DB::Exception(
+                ErrorCodes::LOGICAL_ERROR,
+                "Snapshot doesn't contains local_path object in entry for remote_path: {} vfs_log_id: {}, local_path {}",
+                item.event.remote_path,
+                item.getDestinationWalId(),
+                item.event.local_path);
+        }
+
+        auto local_path_object = wal_object->getObject(item.event.local_path);
+        local_path_object->set("status", static_cast<std::underlying_type_t<VFSAction>>(item.event.action));
+        local_path_object->set("timestamp", item.event.timestamp.epochMicroseconds());
+        local_path_object->set("vfs_log_index", item.getDestinationWalIndex());
+
+        link_count--;
+        data_json->set("link_count", link_count);
+    }
+    else
+    {
+        UNREACHABLE();
+    }
+}
+
+void VFSSnapshotEntry::updateWithVFSItems(const VFSLogItems & items_batch)
+{
+    for (const auto & item : items_batch)
+    {
+        updateWithVFSItem(item);
+    }
+}
+
+void VFSSnapshotDataBase::writeEntryOrAddToRemove(
     const VFSSnapshotEntry & entry, WriteBuffer & write_buffer, VFSSnapshotEntries & entries_to_remove)
 {
-    if (entry.link_count < 0)
-    {
-        throw DB::Exception(ErrorCodes::LOGICAL_ERROR, "Broken links count for file with remote path {}.", entry.remote_path);
-    }
-    else if (entry.link_count == 0)
-    {
-        entries_to_remove.emplace_back(entry);
-    }
-    else if (entry.link_count > 0)
+    if (entry.isAlive())
     {
         entry.serialize(write_buffer);
+        return;
     }
+    entries_to_remove.emplace_back(entry);
 }
 
 
@@ -69,57 +167,81 @@ SnapshotMetadata VFSSnapshotDataBase::mergeWithWals(VFSLogItems && wal_items, co
     /// For most of object stroges (like s3 or azure) we don't need the object path, it's generated randomly.
     /// But other ones reqiested to set it manually.
     std::unique_ptr<ReadBuffer> shapshot_read_buffer = getShapshotReadBuffer(old_snapshot_meta);
-    auto [new_shapshot_write_buffer, new_object_key] = getShapshotWriteBufferAndSnaphotObject(old_snapshot_meta);
+    auto [new_shapshot_write_buffer, new_object_key] = getShapshotWriteBufferAndsnapshotObject(old_snapshot_meta);
 
     LOG_DEBUG(log, "Going to merge WAL batch(size {}) with snapshot (key {})", wal_items.size(), old_snapshot_meta.object_storage_key);
-    auto entires_to_remove = mergeWithWalsImpl(std::move(wal_items), *shapshot_read_buffer, *new_shapshot_write_buffer);
-    SnapshotMetadata new_snaphot_meta(new_object_key);
+    auto merge_result = mergeWithWalsImpl(
+        std::move(wal_items), *shapshot_read_buffer, *new_shapshot_write_buffer, old_snapshot_meta.processed_logs_indices);
+    SnapshotMetadata new_snapshot_meta(new_object_key);
 
-    LOG_DEBUG(log, "Merge snapshot have finished, going to remove {} from object storage", entires_to_remove.size());
-    removeShapshotEntires(entires_to_remove);
-    return new_snaphot_meta;
+    LOG_DEBUG(log, "Merge snapshot have finished, going to remove {} from object storage", merge_result.entries_to_remove.size());
+    removeShapshotEntires(merge_result.entries_to_remove);
+
+    new_snapshot_meta.processed_logs_indices = merge_result.updated_log_ind_map;
+    return new_snapshot_meta;
 }
 
 
-VFSSnapshotEntries VFSSnapshotDataBase::mergeWithWalsImpl(VFSLogItems && wal_items_, ReadBuffer & read_buffer, WriteBuffer & write_buffer)
+VFSSnapshotDataBase::VFSSnapshotMergeResult VFSSnapshotDataBase::mergeWithWalsImpl(
+    VFSLogItems && wal_items_,
+    ReadBuffer & read_buffer,
+    WriteBuffer & write_buffer,
+    const ProcessedLogsIndicesMap & old_vfs_wal_indices_map)
 {
     VFSSnapshotEntries entries_to_remove;
+    ProcessedLogsIndicesMap vfs_wal_indices_map(old_vfs_wal_indices_map);
 
     auto wal_items = std::move(wal_items_);
     std::ranges::sort(
-        wal_items, [](const VFSLogItem & left, const VFSLogItem & right) { return left.event.remote_path < right.event.remote_path; });
-
+        wal_items,
+        [](const VFSLogItem & left, const VFSLogItem & right)
+        {
+            if (left.event.remote_path != right.event.remote_path)
+                return left.event.remote_path < right.event.remote_path;
+            return left.getDestinationWalIndex() < right.getDestinationWalIndex();
+        });
 
     auto current_snapshot_entry = VFSSnapshotEntry::deserialize(read_buffer);
 
-    // Implementation similar to the merge operation:
-    // Iterating thought 2 sorted vectors.
-    // If the links count will be == 0, then add to entries_to_remove
-    // Else perform sum and append into shapshot
+    /// Implementation similar to the merge operation:
+    /// Iterating thought 2 sorted vectors.
+    /// If the links count will be == 0, then add to entries_to_remove
+    /// Else perform sum and append into shapshot
     for (auto wal_iterator = wal_items.begin(); wal_iterator != wal_items.end();)
     {
-        // Combine all wal items with the same remote_path into single one.
-        VFSSnapshotEntry entry_to_merge = {wal_iterator->event.remote_path, 0};
-        while (wal_iterator != wal_items.end() && wal_iterator->event.remote_path == entry_to_merge.remote_path)
+        /// Combine all wal items with the same remote_path into single one.
+        VFSLogItems items_to_merge;
+        const String remote_path_to_merge = wal_iterator->event.remote_path;
+
+        while (wal_iterator != wal_items.end() && wal_iterator->event.remote_path == remote_path_to_merge)
         {
-            int delta_link_count = 0; // TODO: remove delta and save local_path in the snapshot
-            switch (wal_iterator->event.action)
+            /// Skip item if we have already processed items with greater wal index.
+            auto current_log_id_iterator = vfs_wal_indices_map.find(wal_iterator->getDestinationWalId());
+            if (current_log_id_iterator != vfs_wal_indices_map.end()
+                && current_log_id_iterator->second > wal_iterator->getDestinationWalIndex())
             {
-                case VFSAction::LINK:
-                case VFSAction::REQUEST:
-                    delta_link_count = 1;
-                    break;
-                case VFSAction::UNLINK:
-                    delta_link_count = -1;
-                    break;
+                ++wal_iterator;
+                continue;
+            }
+            if (current_log_id_iterator == vfs_wal_indices_map.end())
+            {
+                vfs_wal_indices_map.insert({wal_iterator->getDestinationWalId(), wal_iterator->getDestinationWalIndex()});
+            }
+            else
+            {
+                current_log_id_iterator->second = wal_iterator->getDestinationWalIndex();
             }
 
-            entry_to_merge.link_count += delta_link_count;
+            items_to_merge.emplace_back(std::move(*wal_iterator));
             ++wal_iterator;
         }
+        if (items_to_merge.empty())
+        {
+            continue;
+        }
 
-        // Write and skip entries from snaphot which we won't update
-        while (current_snapshot_entry && current_snapshot_entry->remote_path < entry_to_merge.remote_path)
+        /// Write and skip entries from snapshot which we won't update
+        while (current_snapshot_entry && current_snapshot_entry->remote_path < remote_path_to_merge)
         {
             auto next_snapshot_entry = VFSSnapshotEntry::deserialize(read_buffer);
             if (next_snapshot_entry && current_snapshot_entry->remote_path > next_snapshot_entry->remote_path)
@@ -130,20 +252,23 @@ VFSSnapshotEntries VFSSnapshotDataBase::mergeWithWalsImpl(VFSLogItems && wal_ite
             std::swap(current_snapshot_entry, next_snapshot_entry);
         }
 
-        if (!current_snapshot_entry || current_snapshot_entry->remote_path > entry_to_merge.remote_path)
+        if (!current_snapshot_entry || current_snapshot_entry->remote_path > remote_path_to_merge)
         {
-            writeEntryInSnaphot(entry_to_merge, write_buffer, entries_to_remove);
+            /// There are no entry with such remote path in the shapshot yet. Create it.
+            VFSSnapshotEntry new_entry(remote_path_to_merge);
+            new_entry.updateWithVFSItems(items_to_merge);
+            writeEntryOrAddToRemove(new_entry, write_buffer, entries_to_remove);
             continue;
         }
-        else if (current_snapshot_entry->remote_path == entry_to_merge.remote_path)
+        else if (current_snapshot_entry->remote_path == remote_path_to_merge)
         {
-            current_snapshot_entry->link_count += entry_to_merge.link_count;
-            writeEntryInSnaphot(*current_snapshot_entry, write_buffer, entries_to_remove);
+            current_snapshot_entry->updateWithVFSItems(items_to_merge);
+            writeEntryOrAddToRemove(*current_snapshot_entry, write_buffer, entries_to_remove);
             current_snapshot_entry = VFSSnapshotEntry::deserialize(read_buffer);
         }
         else
         {
-            throw DB::Exception(ErrorCodes::LOGICAL_ERROR, "Unreachable");
+            UNREACHABLE();
         }
     }
 
@@ -159,12 +284,12 @@ VFSSnapshotEntries VFSSnapshotDataBase::mergeWithWalsImpl(VFSLogItems && wal_ite
         std::swap(current_snapshot_entry, next_snapshot_entry);
     }
     write_buffer.finalize();
-    return entries_to_remove;
+    return {entries_to_remove, vfs_wal_indices_map};
 }
 
 std::unique_ptr<ReadBuffer> VFSSnapshotDataFromObjectStorage::getShapshotReadBuffer(const SnapshotMetadata & snapshot_meta) const
 {
-    if (!snapshot_meta.is_initial_snaphot)
+    if (!snapshot_meta.is_initial_snapshot)
     {
         StoredObject object(snapshot_meta.object_storage_key, "", snapshot_meta.total_size);
         // to do read settings.
@@ -175,7 +300,7 @@ std::unique_ptr<ReadBuffer> VFSSnapshotDataFromObjectStorage::getShapshotReadBuf
 }
 
 std::pair<std::unique_ptr<WriteBuffer>, String>
-VFSSnapshotDataFromObjectStorage::getShapshotWriteBufferAndSnaphotObject(const SnapshotMetadata & snapshot_meta) const
+VFSSnapshotDataFromObjectStorage::getShapshotWriteBufferAndsnapshotObject(const SnapshotMetadata & snapshot_meta) const
 {
     String new_object_path = fmt::format("/vfs_shapshots/shapshot_{}", snapshot_meta.znode_version + 1);
     auto new_object_key = object_storage->generateObjectKeyForPath(new_object_path);
