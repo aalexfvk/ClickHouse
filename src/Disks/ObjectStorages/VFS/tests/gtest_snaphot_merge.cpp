@@ -71,6 +71,8 @@ struct ReableVFSEntry
             for (String local_path : wal_obj->getNames())
             {
                 auto local_path_object = wal_obj->getObject(local_path);
+                if (!local_path_object)
+                    continue;
                 auto status_from_entry = static_cast<VFSAction>(local_path_object->getValue<std::underlying_type_t<VFSAction>>("status"));
                 res.links.push_back({parse<UUID>(wal_id), local_path, status_from_entry});
             }
@@ -157,6 +159,22 @@ void checkSnaphotEntries(VFSSnapshotEntries snapshot_entries, ReableVFSEntries &
     EXPECT_EQ(entries_from_snapshot, entries);
 }
 
+void runMergeAndValidateResults(
+    VFSLogItems & items,
+    ReableVFSEntries & expected_entries_to_remove,
+    ReableVFSEntries & expected_state,
+    VFSSnapshotDataFromString & snapshot_data,
+    SnapshotMetadata snapshot_metadata = {})
+{
+    snapshot_data.rotateData();
+    snapshot_data.mergeWithWals(std::move(items), snapshot_metadata);
+
+    auto to_remove = snapshot_data.getEnriesToRemoveAfterLastMerge();
+    checkSnaphotEntries(to_remove, expected_entries_to_remove);
+
+    checkSnapshotState(snapshot_data.getSnapshotData(), expected_state);
+}
+
 const UUID TEST_WAL_ID_1 = parse<UUID>("00000000-0000-0000-0000-000000000001");
 const UUID TEST_WAL_ID_2 = parse<UUID>("00000000-0000-0000-0000-000000000002");
 
@@ -185,22 +203,11 @@ TEST(DiskObjectStorageVFS, CheckInternalRepresenatation)
 TEST(DiskObjectStorageVFS, SimpleCheckSerializationLink)
 {
     VFSLogItems items = {createLogItem("/a", "/local", VFSAction::LINK)};
-
-    VFSSnapshotDataFromString snapshot_data;
-    SnapshotMetadata placeholder_metadata;
-    {
-        snapshot_data.rotateData();
-        snapshot_data.mergeWithWals(std::move(items), placeholder_metadata);
-
-        auto to_remove = snapshot_data.getEnriesToRemoveAfterLastMerge();
-        VFSSnapshotEntries expected_entries_to_remove = {};
-
-        EXPECT_EQ(expected_entries_to_remove, to_remove);
-        items = {};
-    }
-
+    ReableVFSEntries expected_entries_to_remove = {};
     ReableVFSEntries expected_state = {{"/a", 1, {{TEST_WAL_ID_1, "/local", VFSAction::LINK}}}};
-    checkSnapshotState(snapshot_data.getSnapshotData(), expected_state);
+    VFSSnapshotDataFromString snapshot_data;
+
+    runMergeAndValidateResults(items, expected_entries_to_remove, expected_state, snapshot_data);
 }
 
 TEST(DiskObjectStorageVFS, ExceptionOnUnlinkNonExistingPath)
@@ -217,64 +224,60 @@ TEST(DiskObjectStorageVFS, ExceptionOnUnlinkNonExistingPath)
 TEST(DiskObjectStorageVFS, ReplcaceLinkAfterRequest)
 {
     VFSLogItems items;
+    ReableVFSEntries expected_entries_to_remove;
+    ReableVFSEntries expected_state;
     VFSSnapshotDataFromString snapshot_data;
-    SnapshotMetadata placeholder_metadata;
-    {
-        items = {{{"/a", "/local", WALInfo{"", TEST_WAL_ID_2, 0}, 0, VFSAction::REQUEST}, {"", TEST_WAL_ID_1, 0}}};
 
-        snapshot_data.rotateData();
-        snapshot_data.mergeWithWals(std::move(items), placeholder_metadata);
+    items = {{{"/a", "/local", WALInfo{"", TEST_WAL_ID_2, 0}, 0, VFSAction::REQUEST}, {"", TEST_WAL_ID_1, 0}}};
+    expected_entries_to_remove = {};
+    expected_state = {{"/a", 1, {{TEST_WAL_ID_2, "/local", VFSAction::REQUEST}}}};
 
-        auto to_remove = snapshot_data.getEnriesToRemoveAfterLastMerge();
-        VFSSnapshotEntries expected_entries_to_remove = {};
+    runMergeAndValidateResults(items, expected_entries_to_remove, expected_state, snapshot_data);
+    items = {{{"/a", "/local", {}, 0, VFSAction::LINK}, {"", TEST_WAL_ID_2, 0}}};
+    expected_entries_to_remove = {};
+    expected_state = {{"/a", 1, {{TEST_WAL_ID_2, "/local", VFSAction::LINK}}}};
 
-        EXPECT_EQ(expected_entries_to_remove, to_remove);
-        items = {};
-    }
-    {
-        items = {{{"/a", "/local", {}, 0, VFSAction::LINK}, {"", TEST_WAL_ID_2, 0}}};
-        snapshot_data.rotateData();
-        snapshot_data.mergeWithWals(std::move(items), placeholder_metadata);
-
-        auto to_remove = snapshot_data.getEnriesToRemoveAfterLastMerge();
-        VFSSnapshotEntries expected_entries_to_remove = {};
-
-        EXPECT_EQ(expected_entries_to_remove, to_remove);
-        items = {};
-    }
-
-
-    ReableVFSEntries expected_state = {{"/a", 1, {{TEST_WAL_ID_2, "/local", VFSAction::LINK}}}};
-    checkSnapshotState(snapshot_data.getSnapshotData(), expected_state);
+    runMergeAndValidateResults(items, expected_entries_to_remove, expected_state, snapshot_data);
 }
 
 TEST(DiskObjectStorageVFS, LinkUnlinkSameFile)
 {
-    VFSLogItems items = {createLogItem("/a", "/local", VFSAction::LINK), createLogItem("/a", "/local", VFSAction::UNLINK)};
+    // VFSLogItems items = {createLogItem("/a", "/local", VFSAction::LINK), createLogItem("/a", "/local", VFSAction::UNLINK)};
 
+    // VFSSnapshotDataFromString snapshot_data;
+    // SnapshotMetadata placeholder_metadata;
+    // {
+    //     snapshot_data.rotateData();
+    //     snapshot_data.mergeWithWals(std::move(items), placeholder_metadata);
+
+    //     auto to_remove = snapshot_data.getEnriesToRemoveAfterLastMerge();
+    //     ReableVFSEntries expected_entries_to_remove = {{"/a", 0, {{TEST_WAL_ID_1, "/local", VFSAction::UNLINK}}}};
+
+    //     checkSnaphotEntries(to_remove, expected_entries_to_remove);
+    //     items = {};
+    // }
+    // ReableVFSEntries expected_state = {};
+    // checkSnapshotState(snapshot_data.getSnapshotData(), expected_state);
+
+    VFSLogItems items;
+    ReableVFSEntries expected_entries_to_remove;
+    ReableVFSEntries expected_state;
     VFSSnapshotDataFromString snapshot_data;
-    SnapshotMetadata placeholder_metadata;
-    {
-        snapshot_data.rotateData();
-        snapshot_data.mergeWithWals(std::move(items), placeholder_metadata);
 
-        auto to_remove = snapshot_data.getEnriesToRemoveAfterLastMerge();
-        ReableVFSEntries expected_entries_to_remove = {{"/a", 0, {{TEST_WAL_ID_1, "/local", VFSAction::UNLINK}}}};
+    items = {createLogItem("/a", "/local", VFSAction::LINK), createLogItem("/a", "/local", VFSAction::UNLINK)};
+    expected_entries_to_remove = {{"/a", 0, {{TEST_WAL_ID_1, "/local", VFSAction::UNLINK}}}};
+    expected_state = {};
 
-        checkSnaphotEntries(to_remove, expected_entries_to_remove);
-        items = {};
-    }
-    ReableVFSEntries expected_state = {};
-    checkSnapshotState(snapshot_data.getSnapshotData(), expected_state);
+    runMergeAndValidateResults(items, expected_entries_to_remove, expected_state, snapshot_data);
 }
 
 
 TEST(DiskObjectStorageVFS, MergeWalWithsnapshot)
 {
     VFSLogItems items;
+    ReableVFSEntries expected_entries_to_remove;
     ReableVFSEntries expected_state;
     VFSSnapshotDataFromString snapshot_data;
-    SnapshotMetadata placeholder_metadata;
 
     items
         = {createLogItem("/b", "/local", VFSAction::LINK),
@@ -283,38 +286,20 @@ TEST(DiskObjectStorageVFS, MergeWalWithsnapshot)
            createLogItem("/c", "/local2", VFSAction::LINK),
            createLogItem("/c", "/local", VFSAction::LINK)};
 
-    {
-        snapshot_data.rotateData();
-        snapshot_data.mergeWithWals(std::move(items), placeholder_metadata);
-
-        auto to_remove = snapshot_data.getEnriesToRemoveAfterLastMerge();
-        ReableVFSEntries expected_entries_to_remove = {};
-
-        checkSnaphotEntries(to_remove, expected_entries_to_remove);
-        items = {};
-    }
+    expected_entries_to_remove = {};
     expected_state
         = {{"/b", 1, {{TEST_WAL_ID_1, "/local", VFSAction::LINK}}},
            {"/a", 2, {{TEST_WAL_ID_1, "/local", VFSAction::LINK}, {TEST_WAL_ID_1, "/local1", VFSAction::LINK}}},
            {"/c", 2, {{TEST_WAL_ID_1, "/local", VFSAction::LINK}, {TEST_WAL_ID_1, "/local2", VFSAction::LINK}}}};
-    checkSnapshotState(snapshot_data.getSnapshotData(), expected_state);
 
+    runMergeAndValidateResults(items, expected_entries_to_remove, expected_state, snapshot_data);
 
     items
         = {createLogItem("/b", "/local", VFSAction::UNLINK),
            createLogItem("/a", "/local1", VFSAction::UNLINK),
            createLogItem("/c", "/local3", VFSAction::LINK)};
 
-    {
-        snapshot_data.rotateData();
-        snapshot_data.mergeWithWals(std::move(items), placeholder_metadata);
-
-        auto to_remove = snapshot_data.getEnriesToRemoveAfterLastMerge();
-        ReableVFSEntries expected_entries_to_remove = {{"/b", 0, {{TEST_WAL_ID_1, "/local", VFSAction::UNLINK}}}};
-
-        checkSnaphotEntries(to_remove, expected_entries_to_remove);
-        items = {};
-    }
+    expected_entries_to_remove = {{"/b", 0, {{TEST_WAL_ID_1, "/local", VFSAction::UNLINK}}}};
     expected_state
         = {{"/a", 1, {{TEST_WAL_ID_1, "/local", VFSAction::LINK}, {TEST_WAL_ID_1, "/local1", VFSAction::UNLINK}}},
            {"/c",
@@ -322,7 +307,7 @@ TEST(DiskObjectStorageVFS, MergeWalWithsnapshot)
             {{TEST_WAL_ID_1, "/local", VFSAction::LINK},
              {TEST_WAL_ID_1, "/local2", VFSAction::LINK},
              {TEST_WAL_ID_1, "/local3", VFSAction::LINK}}}};
-    checkSnapshotState(snapshot_data.getSnapshotData(), expected_state);
+    runMergeAndValidateResults(items, expected_entries_to_remove, expected_state, snapshot_data);
 
     items
         = {createLogItem("/a", "/local", VFSAction::UNLINK),
@@ -330,22 +315,33 @@ TEST(DiskObjectStorageVFS, MergeWalWithsnapshot)
            createLogItem("/c", "/local2", VFSAction::UNLINK),
            createLogItem("/c", "/local3", VFSAction::UNLINK)};
 
-    {
-        snapshot_data.rotateData();
-        snapshot_data.mergeWithWals(std::move(items), placeholder_metadata);
+    expected_entries_to_remove
+        = {{"/a", 0, {{TEST_WAL_ID_1, "/local", VFSAction::UNLINK}, {TEST_WAL_ID_1, "/local1", VFSAction::UNLINK}}},
+           {"/c",
+            0,
+            {{TEST_WAL_ID_1, "/local", VFSAction::UNLINK},
+             {TEST_WAL_ID_1, "/local2", VFSAction::UNLINK},
+             {TEST_WAL_ID_1, "/local3", VFSAction::UNLINK}}}};
 
-        auto to_remove = snapshot_data.getEnriesToRemoveAfterLastMerge();
-        ReableVFSEntries expected_entries_to_remove
-            = {{"/a", 0, {{TEST_WAL_ID_1, "/local", VFSAction::UNLINK}, {TEST_WAL_ID_1, "/local1", VFSAction::UNLINK}}},
-               {"/c",
-                0,
-                {{TEST_WAL_ID_1, "/local", VFSAction::UNLINK},
-                 {TEST_WAL_ID_1, "/local2", VFSAction::UNLINK},
-                 {TEST_WAL_ID_1, "/local3", VFSAction::UNLINK}}}};
-
-        checkSnaphotEntries(to_remove, expected_entries_to_remove);
-        items = {};
-    }
     expected_state = {};
-    checkSnapshotState(snapshot_data.getSnapshotData(), expected_state);
+
+    runMergeAndValidateResults(items, expected_entries_to_remove, expected_state, snapshot_data);
+}
+
+TEST(DiskObjectStorageVFS, CheckSkipByWALIndex)
+{
+    VFSLogItems items;
+    ReableVFSEntries expected_entries_to_remove;
+    ReableVFSEntries expected_state;
+    VFSSnapshotDataFromString snapshot_data;
+    SnapshotMetadata snapshot_metadata;
+
+
+    items = {{{"/a", "/local", {}, 0, VFSAction::LINK}, {"", TEST_WAL_ID_1, 0}}};
+
+    expected_entries_to_remove = {};
+    expected_state = {};
+    snapshot_metadata.processed_logs_indices = {{TEST_WAL_ID_1, 10}};
+
+    runMergeAndValidateResults(items, expected_entries_to_remove, expected_state, snapshot_data, snapshot_metadata);
 }

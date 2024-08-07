@@ -68,8 +68,12 @@ void VFSSnapshotEntry::updateWithVFSItem(const VFSLogItem & item)
         {
             links_object->set(toString(item.getDestinationWalId()), Poco::JSON::Object::Ptr(new Poco::JSON::Object()));
         }
-
         auto wal_object = links_object->getObject(toString(item.getDestinationWalId()));
+
+        if (!wal_object->has("replica_name"))
+        {
+            wal_object->set("replica_name", item.getDestinationReplicaName());
+        }
 
         if (!wal_object->has(item.event.local_path))
         {
@@ -118,7 +122,7 @@ void VFSSnapshotEntry::updateWithVFSItem(const VFSLogItem & item)
         {
             throw DB::Exception(
                 ErrorCodes::LOGICAL_ERROR,
-                "Snapshot doesn't contains vfs_log_id object in entry for remote_path: {} vfs_log_id: {}, local_path {}",
+                "Snapshot doesn't contains local_path object in entry for remote_path: {} vfs_log_id: {}, local_path {}",
                 item.event.remote_path,
                 item.getDestinationWalId(),
                 item.event.local_path);
@@ -166,18 +170,26 @@ SnapshotMetadata VFSSnapshotDataBase::mergeWithWals(VFSLogItems && wal_items, co
     auto [new_shapshot_write_buffer, new_object_key] = getShapshotWriteBufferAndsnapshotObject(old_snapshot_meta);
 
     LOG_DEBUG(log, "Going to merge WAL batch(size {}) with snapshot (key {})", wal_items.size(), old_snapshot_meta.object_storage_key);
-    auto entires_to_remove = mergeWithWalsImpl(std::move(wal_items), *shapshot_read_buffer, *new_shapshot_write_buffer);
+    auto merge_result = mergeWithWalsImpl(
+        std::move(wal_items), *shapshot_read_buffer, *new_shapshot_write_buffer, old_snapshot_meta.processed_logs_indices);
     SnapshotMetadata new_snapshot_meta(new_object_key);
 
-    LOG_DEBUG(log, "Merge snapshot have finished, going to remove {} from object storage", entires_to_remove.size());
-    removeShapshotEntires(entires_to_remove);
+    LOG_DEBUG(log, "Merge snapshot have finished, going to remove {} from object storage", merge_result.entries_to_remove.size());
+    removeShapshotEntires(merge_result.entries_to_remove);
+
+    new_snapshot_meta.processed_logs_indices = merge_result.updated_log_ind_map;
     return new_snapshot_meta;
 }
 
 
-VFSSnapshotEntries VFSSnapshotDataBase::mergeWithWalsImpl(VFSLogItems && wal_items_, ReadBuffer & read_buffer, WriteBuffer & write_buffer)
+VFSSnapshotDataBase::VFSSnapshotMergeResult VFSSnapshotDataBase::mergeWithWalsImpl(
+    VFSLogItems && wal_items_,
+    ReadBuffer & read_buffer,
+    WriteBuffer & write_buffer,
+    const ProcessedLogsIndicesMap & old_vfs_wal_indices_map)
 {
     VFSSnapshotEntries entries_to_remove;
+    ProcessedLogsIndicesMap vfs_wal_indices_map(old_vfs_wal_indices_map);
 
     auto wal_items = std::move(wal_items_);
     std::ranges::sort(
@@ -189,26 +201,46 @@ VFSSnapshotEntries VFSSnapshotDataBase::mergeWithWalsImpl(VFSLogItems && wal_ite
             return left.getDestinationWalIndex() < right.getDestinationWalIndex();
         });
 
-
     auto current_snapshot_entry = VFSSnapshotEntry::deserialize(read_buffer);
 
-    // Implementation similar to the merge operation:
-    // Iterating thought 2 sorted vectors.
-    // If the links count will be == 0, then add to entries_to_remove
-    // Else perform sum and append into shapshot
+    /// Implementation similar to the merge operation:
+    /// Iterating thought 2 sorted vectors.
+    /// If the links count will be == 0, then add to entries_to_remove
+    /// Else perform sum and append into shapshot
     for (auto wal_iterator = wal_items.begin(); wal_iterator != wal_items.end();)
     {
-        // Combine all wal items with the same remote_path into single one.
+        /// Combine all wal items with the same remote_path into single one.
         VFSLogItems items_to_merge;
         const String remote_path_to_merge = wal_iterator->event.remote_path;
 
         while (wal_iterator != wal_items.end() && wal_iterator->event.remote_path == remote_path_to_merge)
         {
+            /// Skip item if we have already processed items with greater wal index.
+            auto current_log_id_iterator = vfs_wal_indices_map.find(wal_iterator->getDestinationWalId());
+            if (current_log_id_iterator != vfs_wal_indices_map.end()
+                && current_log_id_iterator->second > wal_iterator->getDestinationWalIndex())
+            {
+                ++wal_iterator;
+                continue;
+            }
+            if (current_log_id_iterator == vfs_wal_indices_map.end())
+            {
+                vfs_wal_indices_map.insert({wal_iterator->getDestinationWalId(), wal_iterator->getDestinationWalIndex()});
+            }
+            else
+            {
+                current_log_id_iterator->second = wal_iterator->getDestinationWalIndex();
+            }
+
             items_to_merge.emplace_back(std::move(*wal_iterator));
             ++wal_iterator;
         }
+        if (items_to_merge.empty())
+        {
+            continue;
+        }
 
-        // Write and skip entries from snapshot which we won't update
+        /// Write and skip entries from snapshot which we won't update
         while (current_snapshot_entry && current_snapshot_entry->remote_path < remote_path_to_merge)
         {
             auto next_snapshot_entry = VFSSnapshotEntry::deserialize(read_buffer);
@@ -252,7 +284,7 @@ VFSSnapshotEntries VFSSnapshotDataBase::mergeWithWalsImpl(VFSLogItems && wal_ite
         std::swap(current_snapshot_entry, next_snapshot_entry);
     }
     write_buffer.finalize();
-    return entries_to_remove;
+    return {entries_to_remove, vfs_wal_indices_map};
 }
 
 std::unique_ptr<ReadBuffer> VFSSnapshotDataFromObjectStorage::getShapshotReadBuffer(const SnapshotMetadata & snapshot_meta) const

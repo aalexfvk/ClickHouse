@@ -87,8 +87,19 @@ public:
     SnapshotMetadata mergeWithWals(VFSLogItems && wal_items, const SnapshotMetadata & old_snapshot_meta);
 
 private:
+    struct VFSSnapshotMergeResult
+    {
+        VFSSnapshotEntries entries_to_remove;
+        ProcessedLogsIndicesMap updated_log_ind_map;
+    };
+
+
     void writeEntryOrAddToRemove(const VFSSnapshotEntry & entry, WriteBuffer & write_buffer, VFSSnapshotEntries & entries_to_remove);
-    VFSSnapshotEntries mergeWithWalsImpl(VFSLogItems && wal_items, ReadBuffer & read_buffer, WriteBuffer & write_buffer);
+    VFSSnapshotMergeResult mergeWithWalsImpl(
+        VFSLogItems && wal_items_,
+        ReadBuffer & read_buffer,
+        WriteBuffer & write_buffer,
+        const ProcessedLogsIndicesMap & old_vfs_wal_indices_map);
 
     LoggerPtr log;
 
