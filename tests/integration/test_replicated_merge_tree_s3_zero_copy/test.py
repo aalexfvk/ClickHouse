@@ -22,7 +22,7 @@ def cluster():
             "node1",
             main_configs=["configs/config.d/storage_conf.xml"],
             user_configs=["configs/config.d/users.xml"],
-            macros={"replica": "1"},
+            macros={"replica": "r1"},
             with_minio=True,
             with_zookeeper=True,
         )
@@ -30,14 +30,14 @@ def cluster():
             "node2",
             main_configs=["configs/config.d/storage_conf.xml"],
             user_configs=["configs/config.d/users.xml"],
-            macros={"replica": "2"},
+            macros={"replica": "r2"},
             with_zookeeper=True,
         )
         cluster.add_instance(
             "node3",
             main_configs=["configs/config.d/storage_conf.xml"],
             user_configs=["configs/config.d/users.xml"],
-            macros={"replica": "3"},
+            macros={"replica": "r3"},
             with_zookeeper=True,
         )
 
@@ -145,6 +145,55 @@ def test_insert_select_replicated(cluster, min_rows_for_wide_part, files_per_par
     assert len(
         list(minio.list_objects(cluster.minio_bucket, "data/", recursive=True))
     ) == (3 * FILES_OVERHEAD) + (files_per_part * 3)
+
+
+@pytest.mark.parametrize(
+    "min_rows_for_wide_part,files_per_part",
+    [(0, FILES_OVERHEAD_PER_PART_WIDE)],
+)
+def test_freeze_and_delete(cluster, min_rows_for_wide_part, files_per_part):
+    create_table(
+        cluster,
+        additional_settings="min_rows_for_wide_part={}".format(min_rows_for_wide_part),
+    )
+    node1 = cluster.instances["node1"]
+    node2 = cluster.instances["node2"]
+    node3 = cluster.instances["node3"]
+
+    values = generate_values("2020-01-01", 4096)
+    node1.query(
+        "INSERT INTO s3_test VALUES {}".format(values),
+        settings={"insert_quorum": 3},
+    )
+    node1.query("ALTER TABLE s3_test FREEZE WITH NAME 'test1'")
+    
+    # node1.query("ALTER TABLE s3_test UPDATE data = 'new_value' WHERE 1")
+    # time.sleep(5)
+
+    node1.query("DROP TABLE IF EXISTS s3_test SYNC")
+    time.sleep(2)
+    # node1.query("DETACH TABLE s3_test SYNC")
+
+    minio = cluster.minio_client
+        
+    # assert len(
+    #     list(minio.list_objects(cluster.minio_bucket, "data/", recursive=True))
+    # ) ==  2 * FILES_OVERHEAD + files_per_part  # FILES_OVERHEAD per table
+
+    node2.query("DROP TABLE IF EXISTS s3_test SYNC")
+    node3.query("DROP TABLE IF EXISTS s3_test SYNC")
+
+    node1.query("SYSTEM UNFREEZE WITH NAME 'test1'")
+
+    assert len(
+        list(minio.list_objects(cluster.minio_bucket, "data/", recursive=True))
+    ) == 0
+
+    # node2.query("SYSTEM UNFREEZE WITH NAME 'test2'")
+
+    # assert len(
+    #     list(minio.list_objects(cluster.minio_bucket, "data/", recursive=True))
+    # ) == 0
 
 
 def remove_leftovers_from_zk(node_data, node_for_query, replica_name):

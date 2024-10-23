@@ -29,6 +29,7 @@
     <merge_tree>
         <min_bytes_for_wide_part>0</min_bytes_for_wide_part>
         <allow_remote_fs_zero_copy_replication>true</allow_remote_fs_zero_copy_replication>
+        <disable_freeze_partition_for_zero_copy_replication>false</disable_freeze_partition_for_zero_copy_replication>
         <ratio_of_defaults_for_sparse_serialization>1.0</ratio_of_defaults_for_sparse_serialization>
     </merge_tree>
 
@@ -57,4 +58,5 @@
 
     <database_atomic_delay_before_drop_table_sec>3</database_atomic_delay_before_drop_table_sec>
     <database_atomic_drop_error_cooldown_sec>0</database_atomic_drop_error_cooldown_sec>
+    <enable_system_unfreeze>1</enable_system_unfreeze>
 </clickhouse>
