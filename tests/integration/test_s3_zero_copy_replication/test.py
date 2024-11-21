@@ -1,10 +1,13 @@
 import datetime
 import logging
+import threading
 import time
 
 import pytest
 
 from helpers.cluster import ClickHouseCluster
+from helpers.network import PartitionManager
+
 
 logging.getLogger().setLevel(logging.INFO)
 logging.getLogger().addHandler(logging.StreamHandler())
@@ -21,6 +24,7 @@ def started_cluster():
             macros={"replica": "1"},
             with_minio=True,
             with_zookeeper=True,
+            stay_alive=True
         )
         cluster.add_instance(
             "node2",
@@ -28,6 +32,7 @@ def started_cluster():
             macros={"replica": "2"},
             with_minio=True,
             with_zookeeper=True,
+            stay_alive=True
         )
         logging.info("Starting cluster...")
         cluster.start()
@@ -668,3 +673,372 @@ def test_s3_zero_copy_keeps_data_after_mutation(started_cluster):
     time.sleep(10)
 
     check_objects_not_exisis(cluster, objectsY)
+
+
+def test_attach_detach(started_cluster):
+    node1 = cluster.instances["node1"]
+    node2 = cluster.instances["node2"]    
+
+    node1.query("DROP TABLE IF EXISTS move_table SYNC")
+    node2.query("DROP TABLE IF EXISTS move_table SYNC")
+
+    node1.query(
+        """
+        CREATE TABLE move_table ON CLUSTER test_cluster (i UInt64, d DateTime)
+        ENGINE=ReplicatedMergeTree('/clickhouse/tables/move_table', '{}')
+        ORDER BY (d, i) PARTITION BY d
+        SETTINGS storage_policy='s3', min_replicated_logs_to_keep=2, max_replicated_logs_to_keep=3
+        """.format(
+            "{replica}"
+        )
+    )
+
+    node2.query("SYSTEM STOP FETCHES move_table")
+    node1.query("SYSTEM STOP MOVES move_table")
+    node1.query("SYSTEM STOP FETCHES move_table")
+
+    node1.query("INSERT INTO move_table VALUES (1, '2024-10-23')")
+    node1.query("INSERT INTO move_table VALUES (2, '2024-10-23')")
+    
+    # node1.query("ALTER TABLE move_table DETACH PARTITION '2024-10-23'")
+    # node1.query("ALTER TABLE move_table ATTACH PARTITION '2024-10-23'")
+
+    node2.query("INSERT INTO move_table VALUES (11, '2024-10-23')")
+    node2.query("INSERT INTO move_table VALUES (22, '2024-10-23')")
+    node2.query("INSERT INTO move_table VALUES (33, '2024-10-23')")
+
+    node1.query("DETACH TABLE move_table")
+    node2.query("DETACH TABLE move_table")
+
+    zk = started_cluster.get_kazoo_client("zoo1")
+    zk.delete("/clickhouse/tables/move_table", recursive=True)
+
+    node1.query("ATTACH TABLE move_table")
+    node1.query("SYSTEM RESTORE REPLICA move_table")
+    node2.query("ATTACH TABLE move_table")
+    node2.query("SYSTEM RESTORE REPLICA move_table")
+   
+    node2.query("select * from move_table")
+
+
+
+def test_part_deleted_after_failed_move(started_cluster):
+    node1 = cluster.instances["node1"]
+    node2 = cluster.instances["node2"]    
+
+    node1.query("DROP TABLE IF EXISTS move_table SYNC")
+    node2.query("DROP TABLE IF EXISTS move_table SYNC")
+
+    node1.query(
+        """
+        CREATE TABLE move_table ON CLUSTER test_cluster (d DateTime)
+        ENGINE=ReplicatedMergeTree('/clickhouse/tables/move_table', '{}')
+        ORDER BY d PARTITION BY d
+        SETTINGS storage_policy='hybrid'
+        """.format(
+            "{replica}"
+        )
+    )
+
+    node2.query("SYSTEM STOP FETCHES move_table")
+
+    node1.query("INSERT INTO move_table VALUES ('2024-10-23')")
+
+    node1.query("SYSTEM ENABLE FAILPOINT zero_copy_lock_zk_fail_before_op")
+
+    node1.query_and_get_error("ALTER TABLE move_table MOVE PARTITION '2024-10-23' TO VOLUME 'external'")
+
+    node1.query("SYSTEM DISABLE FAILPOINT zero_copy_lock_zk_fail_before_op")
+
+    # with PartitionManager() as pm:
+    #     pm.drop_instance_zk_connections(node1)
+    
+    # node1.query("ALTER TABLE move_table MOVE PARTITION '2024-10-23' TO VOLUME 'external'")
+    node1.query("ALTER TABLE move_table MOVE PARTITION '2024-10-23' TO VOLUME 'external'")
+
+    time.sleep(5)
+
+    # node1.stop_clickhouse(kill=True)
+    # node1.start_clickhouse()
+
+    node2.query("SYSTEM START FETCHES move_table")
+
+    # node2.query("ALTER TABLE move_table MOVE PARTITION '2024-10-23' TO VOLUME 'external'")
+
+    time.sleep(2)
+
+    # node1.query("TRUNCATE TABLE move_table SYNC")
+
+
+def test_part_cleaned_after_failed_move(started_cluster):
+    node1 = cluster.instances["node1"]
+    node2 = cluster.instances["node2"]    
+
+    node1.query("DROP TABLE IF EXISTS move_table SYNC")
+    node2.query("DROP TABLE IF EXISTS move_table SYNC")
+
+    node1.query(
+        """
+        CREATE TABLE move_table ON CLUSTER test_cluster (i UInt64, date DateTime)
+        ENGINE=ReplicatedMergeTree('/clickhouse/tables/move_table', '{replica}')        
+        ORDER BY date
+        PARTITION BY date
+        TTL date TO VOLUME 'external'
+        SETTINGS 
+          storage_policy='hybrid',
+          temporary_directories_lifetime=0
+        """
+    )
+    # merge_tree_clear_old_temporary_directories_interval_seconds=1,
+    node2.query("SYSTEM STOP FETCHES move_table")
+    node1.query("SYSTEM STOP MOVES move_table")
+
+    # node1.query("INSERT INTO move_table VALUES ('2024-10-23')")
+    node1.query("INSERT INTO move_table VALUES (1, now())")
+
+    #node1.query("SYSTEM ENABLE FAILPOINT stop_moving_part_before_swap_with_active")
+
+    # def move(node):
+    #     node1.query_and_get_error("ALTER TABLE move_table MOVE PARTITION '2024-10-23' TO VOLUME 'external'")
+    
+    node1.query("SYSTEM START MOVES move_table")
+
+    time.sleep(5)
+
+    # with PartitionManager() as pm:        
+    #     pm.drop_instance_zk_connections(node1)
+    #     node1.query("SYSTEM DISABLE FAILPOINT stop_moving_part_before_swap_with_active")
+    #     time.sleep(10)
+    #     node1.query("SYSTEM ENABLE FAILPOINT stop_moving_part_before_swap_with_active")
+
+    time.sleep(5)    
+    
+    with PartitionManager() as pm:        
+        pm.drop_instance_zk_connections(node1)
+        node1.query("SYSTEM DISABLE FAILPOINT stop_moving_part_before_swap_with_active")
+        time.sleep(20)   
+    
+    time.sleep(5)
+
+
+    
+    # # node1.query("ALTER TABLE move_table MOVE PARTITION '2024-10-23' TO VOLUME 'external'")
+    # node1.query("ALTER TABLE move_table MOVE PARTITION '2024-10-23' TO VOLUME 'external'")
+
+    # time.sleep(5)
+
+    # # node1.stop_clickhouse(kill=True)
+    # # node1.start_clickhouse()
+
+    # node2.query("SYSTEM START FETCHES move_table")
+
+    # # node2.query("ALTER TABLE move_table MOVE PARTITION '2024-10-23' TO VOLUME 'external'")
+
+    # time.sleep(2)
+
+    # # node1.query("TRUNCATE TABLE move_table SYNC")
+
+
+# def test_fetch_after_failed_move_to_zero_copy_disk(started_cluster):
+#     node1 = cluster.instances["node1"]
+#     node2 = cluster.instances["node2"]    
+
+#     node1.query("DROP TABLE IF EXISTS move_table SYNC")
+#     node2.query("DROP TABLE IF EXISTS move_table SYNC")    
+
+#     node1.query(
+#         """
+#         CREATE TABLE move_table ON CLUSTER test_cluster (d DateTime)
+#         ENGINE=ReplicatedMergeTree('/clickhouse/tables/move_table', '{}')
+#         ORDER BY d PARTITION BY d
+#         SETTINGS storage_policy='hybrid', temporary_directories_lifetime=1
+#         """.format(
+#             "{replica}"
+#         )
+#     )
+
+#     # node1.stop_clickhouse(kill=True)
+#     # node1.start_clickhouse()
+
+#     # node2.query("SYSTEM STOP FETCHES move_table")
+
+#     node1.query("INSERT INTO move_table VALUES ('2024-10-23')")
+
+#     # node1.query("ALTER TABLE move_table MOVE PARTITION '2024-10-23' TO VOLUME 'main'")
+
+#     # # with PartitionManager() as pm:
+#     # #     pm.drop_instance_zk_connections(node1)
+#     # node1.query("SYSTEM ENABLE FAILPOINT swap_active_part_zero_copy_lock_fail")
+
+#     def move(node):
+#         node.query("ALTER TABLE move_table MOVE PARTITION '2024-10-23' TO VOLUME 'external'")
+
+#     t1 = threading.Thread(target=move, args=[node1])
+#     t2 = threading.Thread(target=move, args=[node2])
+#     t1.start()
+#     t2.start()
+#     t1.join()
+#     t2.join()
+
+#     # node1.query("SYSTEM DISABLE FAILPOINT swap_active_part_zero_copy_lock_fail")
+
+#     time.sleep(10)
+
+#     # # node1.stop_clickhouse(kill=True)
+#     # # node1.start_clickhouse()
+
+#     node2.query("SYSTEM START FETCHES move_table")
+    
+#     # node2.query("ALTER TABLE move_table MOVE PARTITION '2024-10-23' TO VOLUME 'external'")
+#     # node1.query("ALTER TABLE move_table MOVE PARTITION '2024-10-23' TO VOLUME 'external'")
+
+#     # time.sleep(2)
+
+#     node1.query("TRUNCATE TABLE move_table SYNC")
+
+#     time.sleep(2)
+
+
+# def test_failed_restore_replica(started_cluster):
+#     node1 = cluster.instances["node1"]
+#     node2 = cluster.instances["node2"]
+
+#     zk = started_cluster.get_kazoo_client("zoo1")
+
+#     node1.query("DROP TABLE IF EXISTS move_table SYNC")
+#     node2.query("DROP TABLE IF EXISTS move_table SYNC")    
+
+#     node1.query(
+#         """
+#         CREATE TABLE move_table ON CLUSTER test_cluster (x Int64, d DateTime)
+#         ENGINE=ReplicatedMergeTree('/clickhouse/tables/move_table', '{}')
+#         ORDER BY d PARTITION BY d
+#         SETTINGS storage_policy='s3', temporary_directories_lifetime=1
+#         """.format(
+#             "{replica}"
+#         )
+#     )
+
+#     # node1.query("SYSTEM STOP merges move_table")
+#     # node2.query("SYSTEM STOP merges move_table")
+#     # node2.query("SYSTEM STOP FETCHES move_table")
+
+#     for i in range(1, 10):
+#         node1.query(
+#             f"INSERT INTO move_table VALUES ({i}, '2024-11-01')",
+#         )   
+    
+#     node1.query("OPTIMIZE TABLE move_table FINAL")
+    
+#     node1.query("SYSTEM STOP merges move_table")
+#     node2.query("SYSTEM STOP merges move_table")
+
+#     for i in range(10, 20):
+#         node1.query(
+#             f"INSERT INTO move_table VALUES ({i}, '2024-11-01')",
+#         )   
+
+#     # node1.query("ALTER TABLE move_table DETACH PARTITION '2024-11-01'")
+
+#     # node1.query("ALTER TABLE DETACH PARTITION ID '20241101'")
+#     # node1.query("ALTER TABLE DETACH PARTITION ID '20241102'")
+
+#     node1.query("DETACH TABLE move_table")
+#     # node2.query("DETACH TABLE move_table;")
+
+#     # node1.query("ATTACH TABLE move_table;")
+
+#     # node1.query("ALTER TABLE move_table DROP DETACHED PARTITION '2024-11-01'", settings={"allow_drop_detached": 1})
+#     # node2.query("SYSTEM START FETCHES move_table")
+
+#     # # node2.query("SYSTEM DROP REPLICA '1' FROM TABLE move_table;")
+#     zk.delete("/clickhouse/tables/move_table", recursive=True)
+
+#     node1.query("ATTACH TABLE move_table;")
+
+#     # node1.query("SYSTEM RESTART REPLICA move_table;")
+#     # node2.query("SYSTEM RESTART REPLICA move_table;")
+
+#     # node1.query("ATTACH TABLE move_table;")
+#     # node2.query("ATTACH TABLE move_table;")
+#     # # # node1.query("SYSTEM ENABLE FAILPOINT replicated_merge_tree_commit_zk_fail_after_op")
+#     node1.query("SYSTEM RESTORE REPLICA move_table;")
+#     node2.query("SYSTEM RESTART REPLICA move_table;")
+#     # node2.query("SYSTEM RESTORE REPLICA move_table;")
+
+#     # node2.query("ALTER TABLE move_table DROP DETACHED PARTITION '2024-11-01'", settings={"allow_drop_detached": 1})
+
+
+#     # # node1.query("ALTER TABLE move_table ATTACH PARTITION '2024-11-01'")
+
+#     # # node1.query("ALTER TABLE move_table DROP PARTITION  '2024-11-01'")
+#     # node1.query("DROP TABLE move_table")
+
+#     time.sleep(2)
+
+#     #assert_eq_with_retry(
+#     #    node1,
+#     #    "SELECT count() FROM system.replication_queue WHERE table='move_table' and type='ATTACH_PART'",
+#     #    "0\n",
+#     #)
+
+
+# def test_corrupt_restore_replica(started_cluster):
+#     node1 = cluster.instances["node1"]
+#     node2 = cluster.instances["node2"]
+
+#     zk = started_cluster.get_kazoo_client("zoo1")
+
+#     node1.query("DROP TABLE IF EXISTS move_table SYNC")
+#     node2.query("DROP TABLE IF EXISTS move_table SYNC")    
+
+#     node1.query(
+#         """
+#         CREATE TABLE move_table ON CLUSTER test_cluster (x Int64, d DateTime)
+#         ENGINE=ReplicatedMergeTree('/clickhouse/tables/move_table', '{}')
+#         ORDER BY d PARTITION BY d
+#         SETTINGS storage_policy='s3', temporary_directories_lifetime=1
+#         """.format(
+#             "{replica}"
+#         )
+#     )
+
+#     # node1.query("SYSTEM STOP merges move_table")
+#     # node2.query("SYSTEM STOP merges move_table")
+#     # node2.query("SYSTEM STOP FETCHES move_table")
+
+#     for i in range(1, 10):
+#         node1.query(
+#             f"INSERT INTO move_table VALUES ({i}, '2024-11-01')",
+#         )   
+    
+#     node1.query("OPTIMIZE TABLE move_table FINAL")
+    
+#     node1.query("SYSTEM STOP merges move_table")
+#     node2.query("SYSTEM STOP merges move_table")
+
+#     for i in range(10, 20):
+#         node1.query(
+#             f"INSERT INTO move_table VALUES ({i}, '2024-11-01')",
+#         )   
+
+#     # node1.query("ALTER TABLE move_table DETACH PARTITION '2024-11-01'")
+
+#     # node1.query("ALTER TABLE DETACH PARTITION ID '20241101'")
+#     # node1.query("ALTER TABLE DETACH PARTITION ID '20241102'")
+
+#     # node1.query("DETACH TABLE move_table")
+#     # node2.query("DETACH TABLE move_table;")
+
+#     # node1.query("ATTACH TABLE move_table;")
+
+#     # node1.query("ALTER TABLE move_table DROP DETACHED PARTITION '2024-11-01'", settings={"allow_drop_detached": 1})
+#     # node2.query("SYSTEM START FETCHES move_table")
+
+#     # # node2.query("SYSTEM DROP REPLICA '1' FROM TABLE move_table;")
+#     zk.delete("/clickhouse/tables/move_table/replicas/2", recursive=True)
+#     # node1.query("SYSTEM DROP REPLICA '2' FROM TABLE move_table")
+#     node2.query("SYSTEM RESTART REPLICA move_table;")
+#     node2.query("SYSTEM RESTORE REPLICA move_table;")
+
+#     time.sleep(2)

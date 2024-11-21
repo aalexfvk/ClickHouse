@@ -7,7 +7,7 @@
                 <endpoint>http://minio1:9001/root/data/</endpoint>
                 <access_key_id>minio</access_key_id>
                 <secret_access_key>minio123</secret_access_key>
-                <send_metadata>true</send_metadata>
+                <send_metadata>false</send_metadata>
             </s31>
             <s31_again>
                 <type>s3</type>
@@ -39,6 +39,7 @@
                     </main>
                     <external>
                         <disk>s31</disk>
+                        <perform_ttl_move_on_insert>False</perform_ttl_move_on_insert>
                     </external>
                 </volumes>
                 <move_factor>0.0</move_factor>
