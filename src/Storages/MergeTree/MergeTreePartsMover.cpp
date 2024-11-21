@@ -149,10 +149,13 @@ bool MergeTreePartsMover::selectPartsForMove(
         String reason;
         /// Don't report message to log, because logging is excessive.
         if (!can_move(part, &reason))
+        {
+            LOG_DEBUG(log, "Hello can't move part {} reason {}", part->getNameWithState(), reason);
             continue;
+        }        
 
         auto ttl_entry = selectTTLDescriptionForTTLInfos(metadata_snapshot->getMoveTTLs(), part->ttl_infos.moves_ttl, time_of_move, true);
-
+        
         auto to_insert = need_to_move.end();
         auto part_disk_name = part->getDataPartStorage().getDiskName();
 
@@ -171,7 +174,11 @@ bool MergeTreePartsMover::selectPartsForMove(
             auto destination = data->getDestinationForMoveTTL(*ttl_entry);
             if (destination && !data->isPartInTTLDestination(*ttl_entry, *part))
                 reservation = MergeTreeData::tryReserveSpace(part->getBytesOnDisk(), data->getDestinationForMoveTTL(*ttl_entry));
+
+            LOG_DEBUG(log, "Hello candidate move part {} entry {} reservation {} destination {} cond {}", part->getNameWithState(), bool(ttl_entry), bool(reservation), bool(destination), data->isPartInTTLDestination(*ttl_entry, *part));
         }
+
+        
 
         if (reservation) /// Found reservation by TTL rule.
         {
@@ -216,6 +223,11 @@ bool MergeTreePartsMover::selectPartsForMove(
         LOG_DEBUG(log, "Selected {} parts to move according to storage policy rules and {} parts according to TTL rules, {} total", parts_to_move_by_policy_rules, parts_to_move_by_ttl_rules, ReadableSize(parts_to_move_total_size_bytes));
         return true;
     }
+    else
+    {
+        LOG_DEBUG(log, "Hello No Selected {} parts to move according to storage policy rules and {} parts according to TTL rules, {} total", parts_to_move_by_policy_rules, parts_to_move_by_ttl_rules, ReadableSize(parts_to_move_total_size_bytes));
+
+    }
     return false;
 }
 
@@ -245,6 +257,7 @@ MergeTreePartsMover::TemporaryClonedPart MergeTreePartsMover::clonePart(const Me
         String relative_path = part->getDataPartStorage().getPartDirectory();
         if (disk->existsFile(path_to_clone + relative_path))
         {
+            LOG_DEBUG(log, "Hello: path {} already exists", fullPath(disk, path_to_clone + relative_path));
             // If setting is on, we should've already cleaned moving/ dir on startup
             if (data->allowRemoveStaleMovingParts())
                 throw Exception(ErrorCodes::DIRECTORY_ALREADY_EXISTS,
@@ -254,7 +267,8 @@ MergeTreePartsMover::TemporaryClonedPart MergeTreePartsMover::clonePart(const Me
 
             LOG_DEBUG(log, "Path {} already exists. Will remove it and clone again",
                 fullPath(disk, path_to_clone + relative_path));
-            disk->removeRecursive(fs::path(path_to_clone) / relative_path / "");
+            // disk->removeRecursive(fs::path(path_to_clone) / relative_path / "");
+            data->removeDetachedPart(disk, path_to_clone + relative_path, relative_path);
         }
 
         disk->createDirectories(path_to_clone);
@@ -292,8 +306,8 @@ MergeTreePartsMover::TemporaryClonedPart MergeTreePartsMover::clonePart(const Me
         /// Otherwise part might be stuck in the moving directory due to the KEEPER_EXCEPTION in part's destructor
         if (preserve_blobs)
             cloned_part.part->remove_tmp_policy = IMergeTreeDataPart::BlobsRemovalPolicyForTemporaryParts::PRESERVE_BLOBS;
-        else
-            cloned_part.part->remove_tmp_policy = IMergeTreeDataPart::BlobsRemovalPolicyForTemporaryParts::REMOVE_BLOBS;
+        // else
+        //     cloned_part.part->remove_tmp_policy = IMergeTreeDataPart::BlobsRemovalPolicyForTemporaryParts::REMOVE_BLOBS;
     }
     cloned_part.part->loadColumnsChecksumsIndexes(true, true);
     cloned_part.part->loadVersionMetadata();
@@ -302,12 +316,15 @@ MergeTreePartsMover::TemporaryClonedPart MergeTreePartsMover::clonePart(const Me
 }
 
 
+
 void MergeTreePartsMover::swapClonedPart(TemporaryClonedPart & cloned_part) const
 {
     /// Used to get some stuck parts in the moving directory by stopping moves while pause is active
     FailPointInjection::pauseFailPoint(FailPoints::stop_moving_part_before_swap_with_active);
     if (moves_blocker.isCancelled())
         throw Exception(ErrorCodes::ABORTED, "Cancelled moving parts.");
+
+    /// Check swap ready
 
     /// `getActiveContainingPart` and `swapActivePart` are called under the same lock
     /// to prevent part becoming inactive between calls
@@ -327,12 +344,25 @@ void MergeTreePartsMover::swapClonedPart(TemporaryClonedPart & cloned_part) cons
         return;
     }
 
-    cloned_part.part->is_temp = false;
+    /// Check lock ready 
+    /// exclusive lock isExpired
+
+    /// Try 
+    data->lockSharedData(*cloned_part.part, /* replace_existing_lock = */ true);
+    /// Rollback
+
+    /// Try
 
     /// Don't remove new directory but throw an error because it may contain part which is currently in use.
     cloned_part.part->renameTo(active_part->name, false);
+    cloned_part.part->is_temp = false; /// Do that after
 
-    /// TODO what happen if server goes down here?
+    /// Rollback
+
+    /// If server goes down here we will get two copy of the part with the same name on different disks. 
+    /// And on the next ClickHouse startup during loading parts the first copy (in the order of disks in storage policy)
+    /// will be loaded as Active, the second will be loaded as Outdated and removed as duplicate.
+    /// See MergeTreeData::loadDataParts
     data->swapActivePart(cloned_part.part, part_lock);
 
     LOG_TRACE(log, "Part {} was moved to {}", cloned_part.part->name, cloned_part.part->getDataPartStorage().getFullPath());

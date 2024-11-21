@@ -1343,6 +1343,7 @@ void MergeTreeData::PartLoadingTree::add(const MergeTreePartInfo & info, const S
             }
         }
 
+        LOG_DEBUG(getLogger("Hello"), "Hello PartLoadingTree::add current {} added {} {}", current->name, name, disk->getName());
         current->children.emplace(info, std::make_shared<Node>(info, name, disk));
         break;
     }
@@ -1755,7 +1756,13 @@ std::vector<MergeTreeData::LoadPartResult> MergeTreeData::loadDataPartsFromDisk(
 void MergeTreeData::loadDataParts(bool skip_sanity_checks, std::optional<std::unordered_set<std::string>> expected_parts)
 {
     Stopwatch watch;
-    LOG_DEBUG(log, "Loading data parts");
+    LOG_DEBUG(log, "Loading /They will be loaded asynchronously parts");
+
+    if (expected_parts.has_value())
+    {
+        for (const auto & name: *expected_parts)
+            LOG_DEBUG(log, "Expected part {}", name);
+    }
 
     auto metadata_snapshot = getInMemoryMetadataPtr();
     const auto settings = getSettings();
@@ -1864,9 +1871,14 @@ void MergeTreeData::loadDataParts(bool skip_sanity_checks, std::optional<std::un
                 if (auto part_info = MergeTreePartInfo::tryParsePartName(it->name(), format_version))
                 {
                     if (expected_parts && !expected_parts->contains(it->name()))
+                    {
+                        LOG_DEBUG(log, "Unexpected part {}", it->name());
                         unexpected_disk_parts.emplace_back(*part_info, it->name(), disk_ptr);
-                    else
+                    }
+                    else{
+                        LOG_DEBUG(log, "Found part {}", it->name());
                         disk_parts.emplace_back(*part_info, it->name(), disk_ptr);
+                    }
                 }
             }
         }, Priority{0});
@@ -1880,7 +1892,14 @@ void MergeTreeData::loadDataParts(bool skip_sanity_checks, std::optional<std::un
         std::move(disk_parts.begin(), disk_parts.end(), std::back_inserter(parts_to_load));
     PartLoadingTree::PartLoadingInfos unexpected_parts_to_load;
     for (auto & disk_parts : unexpected_parts_to_load_by_disk)
+    {
+        for (const auto & part: disk_parts)
+            LOG_DEBUG(log, "Unexpected part {} on disk {} ", part.name, part.disk->getName());
         std::move(disk_parts.begin(), disk_parts.end(), std::back_inserter(unexpected_parts_to_load));
+    }
+
+    for (const auto & part: parts_to_load)
+        LOG_DEBUG(log, "Hello parts_to_load {} {}", part.name, part.disk->getName());
 
     auto loading_tree = PartLoadingTree::build(std::move(parts_to_load));
 
@@ -1890,6 +1909,7 @@ void MergeTreeData::loadDataParts(bool skip_sanity_checks, std::optional<std::un
     /// Collect only "the most covering" parts from the top level of the tree.
     loading_tree.traverse(/*recursive=*/ false, [&](const auto & node)
     {
+        LOG_DEBUG(log, "Hello traverse emplace {} {}", node->name, node->disk->getName());
         active_parts.emplace_back(node);
     });
 
@@ -2351,22 +2371,30 @@ static bool isOldPartDirectory(const DiskPtr & disk, const String & directory_pa
 }
 
 
-size_t MergeTreeData::clearOldTemporaryDirectories(size_t custom_directories_lifetime_seconds, const NameSet & valid_prefixes)
+size_t MergeTreeData::clearOldTemporaryDirectories(size_t custom_directories_lifetime_seconds, const Names & valid_prefixes)
 {
     size_t cleared_count = 0;
 
     cleared_count += clearOldTemporaryDirectories(relative_data_path, custom_directories_lifetime_seconds, valid_prefixes);
 
+    LOG_WARNING(log, "Hello: clearOldTemporaryDirectories before");
     if (allowRemoveStaleMovingParts())
     {
+        LOG_WARNING(log, "Hello: clearOldTemporaryDirectories {}", fs::path(relative_data_path) / "moving");
+
         /// Clear _all_ parts from the `moving` directory
-        cleared_count += clearOldTemporaryDirectories(fs::path(relative_data_path) / "moving", custom_directories_lifetime_seconds, {""});
+        /// It is assumed that /moving directory can contain only parts with prefix "delete_tmp_" or no prefix at all // TODO source of this names
+        cleared_count += clearOldTemporaryDirectories(
+            fs::path(relative_data_path) / "moving",
+            custom_directories_lifetime_seconds,
+            {"delete_tmp_", ""},
+            /* try_unlock_shared_parts = */ true);
     }
 
     return cleared_count;
 }
 
-size_t MergeTreeData::clearOldTemporaryDirectories(const String & root_path, size_t custom_directories_lifetime_seconds, const NameSet & valid_prefixes)
+size_t MergeTreeData::clearOldTemporaryDirectories(const String & root_path, size_t custom_directories_lifetime_seconds, const Names & valid_prefixes, bool try_unlock_shared_parts)
 {
     /// If the method is already called from another thread, then we don't need to do anything.
     std::unique_lock lock(clear_old_temporary_directories_mutex, std::defer_lock);
@@ -2392,11 +2420,13 @@ size_t MergeTreeData::clearOldTemporaryDirectories(const String & root_path, siz
         {
             const std::string & basename = it->name();
             bool start_with_valid_prefix = false;
+            std::string found_prefix;
             for (const auto & prefix : valid_prefixes)
             {
                 if (startsWith(basename, prefix))
                 {
                     start_with_valid_prefix = true;
+                    found_prefix = prefix;
                     break;
                 }
             }
@@ -2441,7 +2471,16 @@ size_t MergeTreeData::clearOldTemporaryDirectories(const String & root_path, siz
                         keep_shared = true;
                     }
 
-                    disk->removeSharedRecursive(it->path(), keep_shared, {});
+                    if (try_unlock_shared_parts)
+                    {
+                        std::string part_name = basename.substr(found_prefix.length());
+                        LOG_DEBUG(log, "Hello part_name {} basename {} found_prefix {}", part_name, basename, found_prefix);
+                        removeDetachedPart(disk, it->path(), part_name);
+                    }
+                    else
+                    {
+                        disk->removeSharedRecursive(it->path(), keep_shared, {});
+                    }
                     ++cleared_count;
                 }
             }
@@ -4844,10 +4883,6 @@ void MergeTreeData::swapActivePart(MergeTreeData::DataPartPtr part_copy, DataPar
             ssize_t diff_bytes = part_copy->getBytesOnDisk() - original_active_part->getBytesOnDisk();
             ssize_t diff_rows = part_copy->rows_count - original_active_part->rows_count;
             increaseDataVolume(diff_bytes, diff_rows, /* parts= */ 0);
-
-            /// Move parts are non replicated operations, so we take lock here.
-            /// All other locks are taken in StorageReplicatedMergeTree
-            lockSharedData(*part_copy, /* replace_existing_lock */ true);
 
             return;
         }

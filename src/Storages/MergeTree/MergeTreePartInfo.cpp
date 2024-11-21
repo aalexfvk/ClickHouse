@@ -395,7 +395,7 @@ DetachedPartInfo DetachedPartInfo::parseDetachedPartName(
 
 void DetachedPartInfo::addParsedPartInfo(const MergeTreePartInfo & part)
 {
-    // Both class are aggregates so it's ok.
+    // Slicing assignment copies only base class sub-object.
     static_cast<MergeTreePartInfo &>(*this) = part;
 }
 

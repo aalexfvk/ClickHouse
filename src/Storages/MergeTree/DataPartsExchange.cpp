@@ -434,7 +434,7 @@ std::pair<MergeTreeData::MutableDataPartPtr, scope_guard> Fetcher::fetchSelected
     bool to_detached,
     const String & tmp_prefix_,
     std::optional<CurrentlySubmergingEmergingTagger> * tagger_ptr,
-    bool try_zero_copy,
+    ZeroCopyFetchMode zero_copy_fetch_mode,
     DiskPtr disk)
 {
     if (blocker.isCancelled())
@@ -442,6 +442,10 @@ std::pair<MergeTreeData::MutableDataPartPtr, scope_guard> Fetcher::fetchSelected
 
     const auto data_settings = data.getSettings();
 
+    bool try_zero_copy
+        = zero_copy_fetch_mode == ZeroCopyFetchMode::TRY_ZERO_COPY || zero_copy_fetch_mode == ZeroCopyFetchMode::ONLY_ZERO_COPY;
+
+    // TODO check only zero-copy and throw
     if (data.canUseZeroCopyReplication() && !try_zero_copy)
         LOG_INFO(log, "Zero copy replication enabled, but trying to fetch part {} without zero copy", part_name);
 
@@ -511,13 +515,17 @@ std::pair<MergeTreeData::MutableDataPartPtr, scope_guard> Fetcher::fetchSelected
         const String & remote_fs_metadata = boost::algorithm::join(capability, ", ");
         uri.addQueryParameter("remote_fs_metadata", remote_fs_metadata);
     }
-    else
+    else if (data.canUseZeroCopyReplication())
     {
-        if (data.canUseZeroCopyReplication())
-            LOG_INFO(log, "Cannot select any zero-copy disk for {}", part_name);
-
-        try_zero_copy = false;
+        if(zero_copy_fetch_mode == ZeroCopyFetchMode::TRY_ZERO_COPY)
+        {
+            LOG_INFO(log, "Cannot select any zero-copy disk for {}", part_name);        
+            try_zero_copy = false;
+        }
+        else if (zero_copy_fetch_mode == ZeroCopyFetchMode::ONLY_ZERO_COPY)
+            throw Exception(ErrorCodes::ZERO_COPY_REPLICATION_ERROR, "Cannot select any zero-copy disk for {}", part_name);
     }
+    
 
     Poco::Net::HTTPBasicCredentials creds{};
     if (!user.empty())
@@ -700,9 +708,11 @@ std::pair<MergeTreeData::MutableDataPartPtr, scope_guard> Fetcher::fetchSelected
                 host,
                 port,
                 timeouts,
-                user, password, interserver_scheme, throttler, to_detached, tmp_prefix, nullptr, false, disk);
+                user, password, interserver_scheme, throttler, to_detached, tmp_prefix, nullptr, ZeroCopyFetchMode::NO_ZERO_COPY, disk);
         }
     }
+    else if (zero_copy_fetch_mode == ZeroCopyFetchMode::ONLY_ZERO_COPY)
+        throw Exception(ErrorCodes::ZERO_COPY_REPLICATION_ERROR, "Only zero-copy part {} is expected, but got a full-copy one", part_name);
 
     auto storage_id = data.getStorageID();
     String new_part_path = fs::path(data.getFullPathOnDisk(disk)) / part_name / "";

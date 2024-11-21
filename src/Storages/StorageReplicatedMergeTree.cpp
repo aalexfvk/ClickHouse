@@ -214,6 +214,8 @@ namespace FailPoints
     extern const char replicated_queue_fail_next_entry[];
     extern const char replicated_queue_unfail_entries[];
     extern const char finish_set_quorum_failed_parts[];
+    extern const char zero_copy_lock_zk_fail_before_op[];
+    extern const char zero_copy_lock_zk_fail_after_op[];
 }
 
 namespace ErrorCodes
@@ -2380,8 +2382,7 @@ bool StorageReplicatedMergeTree::executeFetch(LogEntry & entry, bool need_to_che
                 source_replica_path,
                 /* to_detached= */ false,
                 entry.quorum,
-                /* zookeeper_ */ nullptr,
-                /* try_fetch_shared= */ true))
+                /* zookeeper_ */ nullptr))
             {
                 return false;
             }
@@ -4851,7 +4852,7 @@ bool StorageReplicatedMergeTree::fetchPart(
     bool to_detached,
     size_t quorum,
     zkutil::ZooKeeper::Ptr zookeeper_,
-    bool try_fetch_shared)
+    DataPartsExchange::ZeroCopyFetchMode zero_copy_fetch_mode)
 {
     if (isStaticStorage())
         throw Exception(ErrorCodes::TABLE_IS_READ_ONLY, "Table is in readonly mode due to static storage");
@@ -5028,7 +5029,7 @@ bool StorageReplicatedMergeTree::fetchPart(
                 to_detached,
                 "",
                 &tagger_ptr,
-                try_fetch_shared);
+                zero_copy_fetch_mode);
             part_directory_lock = std::move(lock);
             return fetched_part;
         };
@@ -5124,7 +5125,9 @@ MergeTreeData::MutableDataPartPtr StorageReplicatedMergeTree::fetchExistsPart(
     const StorageMetadataPtr & metadata_snapshot,
     const String & source_replica_path,
     DiskPtr replaced_disk,
-    String replaced_part_path)
+    String replaced_part_path,
+    DataPartsExchange::ZeroCopyFetchMode zero_copy_fetch_mode
+    )
 {
     auto zookeeper = getZooKeeper();
     const auto part_info = MergeTreePartInfo::fromPartName(part_name, format_version);
@@ -5188,7 +5191,7 @@ MergeTreeData::MutableDataPartPtr StorageReplicatedMergeTree::fetchExistsPart(
             metadata_snapshot, getContext(), part_name, zookeeper_info.zookeeper_name, source_replica_path,
             address.host, address.replication_port,
             timeouts, credentials->getUser(), credentials->getPassword(),
-            interserver_scheme, replicated_fetches_throttler, false, "", nullptr, true,
+            interserver_scheme, replicated_fetches_throttler, false, "", nullptr, zero_copy_fetch_mode,
             replaced_disk);
         part_temp_directory_lock = std::move(lock);
         return fetched_part;
@@ -7368,7 +7371,15 @@ void StorageReplicatedMergeTree::fetchPartition(
         try
         {
             /// part name, metadata, part_path, true, 0, zookeeper
-            if (!fetchPart(part_name, metadata_snapshot, from_zookeeper_name, part_path, true, 0, zookeeper, /* try_fetch_shared = */ false))
+            if (!fetchPart(
+                    part_name,
+                    metadata_snapshot,
+                    from_zookeeper_name,
+                    part_path,
+                    true,
+                    0,
+                    zookeeper,
+                    DataPartsExchange::ZeroCopyFetchMode::NO_ZERO_COPY))
                 throw Exception(ErrorCodes::UNFINISHED, "Failed to fetch part {} from {}", part_name, from_);
         }
         catch (const DB::Exception & e)
@@ -7507,7 +7518,15 @@ void StorageReplicatedMergeTree::fetchPartition(
 
             try
             {
-                fetched = fetchPart(part, metadata_snapshot, from_zookeeper_name, best_replica_path, true, 0, zookeeper, /* try_fetch_shared = */ false);
+                fetched = fetchPart(
+                    part,
+                    metadata_snapshot,
+                    from_zookeeper_name,
+                    best_replica_path,
+                    true,
+                    0,
+                    zookeeper,
+                    DataPartsExchange::ZeroCopyFetchMode::NO_ZERO_COPY);
             }
             catch (const DB::Exception & e)
             {
@@ -9575,7 +9594,7 @@ void StorageReplicatedMergeTree::lockSharedData(
     {
         String zookeeper_node = fs::path(zc_zookeeper_path) / id / replica_name;
 
-        LOG_TRACE(log, "Trying to create zookeeper persistent lock {} with hardlinks [{}]", zookeeper_node, fmt::join(hardlinks, ", "));
+        LOG_TRACE(log, "Trying to create zookeeper persistent lock {} with hardlinks [{}]", zookeeper_node, fmt::join(hardlinks, ", "));        
 
         createZeroCopyLockNode(
             zookeeper, zookeeper_node, zkutil::CreateMode::Persistent,
@@ -9844,6 +9863,9 @@ std::pair<bool, NameSet> StorageReplicatedMergeTree::unlockSharedDataByID(
 
         LOG_TRACE(logger, "Removing zookeeper lock {} for part {} (files to keep: [{}])", zookeeper_part_replica_node, part_name, fmt::join(files_not_to_remove, ", "));
 
+        
+        
+
         if (auto ec = zookeeper_ptr->tryRemove(zookeeper_part_replica_node); ec != Coordination::Error::ZOK)
         {
             /// Very complex case. It means that lock already doesn't exist when we tried to remove it.
@@ -9881,7 +9903,6 @@ std::pair<bool, NameSet> StorageReplicatedMergeTree::unlockSharedDataByID(
         }
 
         LOG_TRACE(logger, "No more children left for {}, will try to remove the whole node", zookeeper_part_uniq_node);
-
 
         auto error_code = zookeeper_ptr->tryRemove(zookeeper_part_uniq_node);
 
@@ -10467,6 +10488,10 @@ void StorageReplicatedMergeTree::createZeroCopyLockNode(
         Coordination::Requests ops;
         Coordination::Responses responses;
         getZeroCopyLockNodeCreateOps(zookeeper, zookeeper_node, ops, mode, replace_existing_lock, path_to_set_hardlinked_files, hardlinked_files);
+
+        fiu_do_on(FailPoints::zero_copy_lock_zk_fail_before_op, { zookeeper->forceFailureBeforeOperation(); });
+        fiu_do_on(FailPoints::zero_copy_lock_zk_fail_after_op, { zookeeper->forceFailureAfterOperation(); });
+        
         auto error = zookeeper->tryMulti(ops, responses);
         if (error == Coordination::Error::ZOK)
         {

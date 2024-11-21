@@ -141,7 +141,7 @@ struct MergeTreePartInfo
 class IDisk;
 using DiskPtr = std::shared_ptr<IDisk>;
 
-/// Information about detached part, which includes its prefix in
+/// Information about detached or temporary part, which includes its prefix in
 /// addition to the above fields.
 struct DetachedPartInfo : public MergeTreePartInfo
 {
@@ -167,6 +167,7 @@ struct DetachedPartInfo : public MergeTreePartInfo
         "merge-not-byte-identical",
         "mutate-not-byte-identical",
         "broken-from-backup",
+        "delete_tmp"
     });
 
     static constexpr auto DETACHED_REASONS_REMOVABLE_BY_TIMEOUT = std::to_array<std::string_view>({

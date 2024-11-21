@@ -703,7 +703,8 @@ void DataPartStorageOnDiskBase::remove(
     /// "moving/all_1_1_1" or "detached/all_2_3_5". We should handle this case more properly.
 
     /// File might be already renamed on previous try
-    bool has_delete_prefix = part_dir_without_slash.filename().string().starts_with("delete_tmp_");
+    String part_name = part_dir_without_slash.filename().string();
+    bool has_delete_prefix = part_name.starts_with("delete_tmp_");
     std::optional<CanRemoveDescription> can_remove_description;
     auto disk = volume->getDisk();
     fs::path to = fs::path(root_path) / part_dir_without_slash;
@@ -720,11 +721,11 @@ void DataPartStorageOnDiskBase::remove(
                     part_dir,
                     root_path);
 
-            part_dir_without_slash = fs::path(parent_path) / ("delete_tmp_" + std::string{part_dir_without_slash.filename()});
+            part_dir_without_slash = fs::path(parent_path) / ("delete_tmp_" + part_name);
         }
         else
         {
-            part_dir_without_slash = ("delete_tmp_" + std::string{part_dir_without_slash.filename()});
+            part_dir_without_slash = ("delete_tmp_" + part_name);
         }
 
         to = fs::path(root_path) / part_dir_without_slash;
@@ -735,9 +736,10 @@ void DataPartStorageOnDiskBase::remove(
                         "Most likely this is due to unclean restart or race condition. Removing it.", fullPath(disk, to));
             try
             {
+                //disk->removeDetachedPart(disk, to, part_name);
                 can_remove_description.emplace(can_remove_callback());
                 disk->removeSharedRecursive(
-                    fs::path(to) / "", !can_remove_description->can_remove_anything, can_remove_description->files_not_to_remove);
+                   fs::path(to) / "", !can_remove_description->can_remove_anything, can_remove_description->files_not_to_remove);
             }
             catch (...)
             {

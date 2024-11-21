@@ -759,7 +759,7 @@ private:
     bool findReplicaHavingCoveringPart(const String & part_name, bool active);
     String findReplicaHavingCoveringPartImplLowLevel(LogEntry * entry, const String & part_name, String & found_part_name, bool active);
     static std::set<MergeTreePartInfo> findReplicaUniqueParts(const String & replica_name_, const String & zookeeper_path_, MergeTreeDataFormatVersion format_version_, zkutil::ZooKeeper::Ptr zookeeper_, LoggerPtr log_);
-
+    
     /** Download the specified part from the specified replica.
       * If `to_detached`, the part is placed in the `detached` directory.
       * If quorum != 0, then the node for tracking the quorum is updated.
@@ -773,7 +773,7 @@ private:
         bool to_detached,
         size_t quorum,
         zkutil::ZooKeeper::Ptr zookeeper_ = nullptr,
-        bool try_fetch_shared = true);
+        DataPartsExchange::ZeroCopyFetchMode zero_copy_fetch_mode = DataPartsExchange::ZeroCopyFetchMode::TRY_ZERO_COPY);
 
     /** Download the specified part from the specified replica.
       * Used for replace local part on the same s3-shared part in hybrid storage.
@@ -784,7 +784,9 @@ private:
         const StorageMetadataPtr & metadata_snapshot,
         const String & replica_path,
         DiskPtr replaced_disk,
-        String replaced_part_path);
+        String replaced_part_path,
+        DataPartsExchange::ZeroCopyFetchMode zero_copy_fetch_mode = DataPartsExchange::ZeroCopyFetchMode::TRY_ZERO_COPY
+        );
 
     /// Required only to avoid races between executeLogEntry and fetchPartition
     std::unordered_set<String> currently_fetching_parts;

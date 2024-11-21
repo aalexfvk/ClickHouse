@@ -55,6 +55,13 @@ private:
     LoggerPtr log;
 };
 
+enum class ZeroCopyFetchMode
+{
+    NO_ZERO_COPY,
+    TRY_ZERO_COPY,
+    ONLY_ZERO_COPY
+};
+
 /** Client for getting the parts from the table *MergeTree.
   */
 class Fetcher final : private boost::noncopyable
@@ -79,7 +86,7 @@ public:
         bool to_detached = false,
         const String & tmp_prefix_ = "",
         std::optional<CurrentlySubmergingEmergingTagger> * tagger_ptr = nullptr,
-        bool try_zero_copy = true,
+        ZeroCopyFetchMode zero_copy_fetch_mode = ZeroCopyFetchMode::TRY_ZERO_COPY,
         DiskPtr dest_disk = nullptr);
 
     /// You need to stop the data transfer.

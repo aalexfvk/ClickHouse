@@ -596,8 +596,9 @@ void IMergeTreeDataPart::removeIfNeeded()
         }
     }
     catch (...)
-    {
-        tryLogCurrentException(__PRETTY_FUNCTION__, fmt::format("while removing part {} with path {}", name, path));
+    {        
+        tryLogCurrentException(__PRETTY_FUNCTION__, fmt::format("while removing part {} with path {}\n{}", name, path, StackTrace().toString()));
+        LOG_DEBUG(storage.log, "Hello: In dtr part path {} exists {}", getDataPartStorage().getRelativePath(), getDataPartStorage().exists());
 
         /// FIXME If part it temporary, then directory will not be removed for 1 day (temporary_directories_lifetime).
         /// If it's tmp_merge_<part_name> or tmp_fetch_<part_name>,
