@@ -1,0 +1,721 @@
+clickhouse_integration_tests_volume
+Start tests
+============================= test session starts ==============================
+platform linux -- Python 3.10.12, pytest-7.4.4, pluggy-1.5.0 -- /usr/bin/python3
+cachedir: .pytest_cache
+rootdir: /ClickHouse/tests/integration
+configfile: pytest.ini
+plugins: reportlog-0.4.0, timeout-2.2.0, xdist-3.5.0, random-0.2, repeat-0.9.3, order-1.0.0
+timeout: 900.0s
+timeout method: signal
+timeout func_only: False
+collecting ... collected 17 items / 16 deselected / 1 selected
+
+test_s3_zero_copy_replication/test.py::test_encoding FAILED              [100%]
+
+=================================== FAILURES ===================================
+________________________________ test_encoding _________________________________
+
+started_cluster = <helpers.cluster.ClickHouseCluster object at 0x7f7982fb3310>
+test_table = 'table_test_encoding'
+
+    def test_encoding(started_cluster, test_table):
+        node1 = cluster.instances["node1"]
+        node2 = cluster.instances["node2"]
+    
+>       node1.query(
+            f"""
+            CREATE TABLE {test_table} ON CLUSTER test_cluster (`привет` UInt64, date DateTime)
+            ENGINE=ReplicatedMergeTree('/clickhouse/tables/{test_table}', '{{replica}}')
+            ORDER BY date PARTITION BY date
+            SETTINGS storage_policy='hybrid'
+            """.encode("cp1251")
+        )
+
+test_s3_zero_copy_replication/test.py:807: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+helpers/cluster.py:3631: in query
+    return self.client.query(
+helpers/client.py:36: in wrap
+    return func(self, *args, **kwargs)
+helpers/client.py:63: in query
+    return self.get_query_request(
+helpers/client.py:111: in get_query_request
+    return CommandRequest(command, stdin, timeout, ignore_error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <helpers.client.CommandRequest object at 0x7f7982ec73d0>
+command = ['/clickhouse', 'client', '--host', '172.16.1.9', '--port', '9000', ...]
+stdin = b"\n        CREATE TABLE table_test_encoding ON CLUSTER test_cluster (`\xef\xf0\xe8\xe2\xe5\xf2` UInt64, date DateTime...t_encoding', '{replica}')\n        ORDER BY date PARTITION BY date\n        SETTINGS storage_policy='hybrid'\n        "
+timeout = None, ignore_error = False
+
+    def __init__(self, command, stdin=None, timeout=None, ignore_error=False):
+        # Write data to tmp file to avoid PIPEs and execution blocking
+        stdin_file = tempfile.TemporaryFile(mode="w+")
+>       stdin_file.write(stdin)
+E       TypeError: write() argument must be str, not bytes
+
+helpers/client.py:175: TypeError
+---------------------------- Captured stdout setup -----------------------------
+Copy common default production configuration from /clickhouse-config. Files: config.xml, users.xml
+Copy common default production configuration from /clickhouse-config. Files: config.xml, users.xml
+---------------------------- Captured stderr setup -----------------------------
+Command:[docker ps | wc -l]
+Stdout:1
+No running containers
+Pruning Docker networks
+Command:[docker network prune --force]
+Command:[sysctl net.ipv4.ip_local_port_range='55000 65535']
+Stdout:net.ipv4.ip_local_port_range = 55000 65535
+clickhouse_start_command: clickhouse server --config-file=/etc/clickhouse-server/{main_config_file} --log-file=/var/log/clickhouse-server/clickhouse-server.log --errorlog-file=/var/log/clickhouse-server/clickhouse-server.err.log
+Setup Keeper
+Cluster name: project_name:roottests3zerocopyreplication. Added instance name:node1 tag:latest base_cmd:['docker', 'compose', '--env-file', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/.env', '--project-name', 'roottests3zerocopyreplication', '--file', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node1/docker-compose.yml', '--file', '/ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_keeper.yml', '--file', '/ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_minio.yml'] docker_compose_yml_dir:/ClickHouse/tests/integration/helpers/../../../tests/integration/compose/
+clickhouse_start_command: clickhouse server --config-file=/etc/clickhouse-server/{main_config_file} --log-file=/var/log/clickhouse-server/clickhouse-server.log --errorlog-file=/var/log/clickhouse-server/clickhouse-server.err.log
+Cluster name: project_name:roottests3zerocopyreplication. Added instance name:node2 tag:latest base_cmd:['docker', 'compose', '--env-file', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/.env', '--project-name', 'roottests3zerocopyreplication', '--file', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node1/docker-compose.yml', '--file', '/ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_keeper.yml', '--file', '/ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_minio.yml', '--file', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node2/docker-compose.yml'] docker_compose_yml_dir:/ClickHouse/tests/integration/helpers/../../../tests/integration/compose/
+Starting cluster...
+Running tests in /ClickHouse/tests/integration/test_s3_zero_copy_replication/test.py
+Cluster start called. is_up=False
+Docker networks for project roottests3zerocopyreplication are NETWORK ID   NAME      DRIVER    SCOPE
+
+Docker containers for project roottests3zerocopyreplication are CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS    PORTS     NAMES
+
+Docker volumes for project roottests3zerocopyreplication are DRIVER    VOLUME NAME
+
+Cleanup called
+Docker networks for project roottests3zerocopyreplication are NETWORK ID   NAME      DRIVER    SCOPE
+
+Docker containers for project roottests3zerocopyreplication are CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS    PORTS     NAMES
+
+Docker volumes for project roottests3zerocopyreplication are DRIVER    VOLUME NAME
+
+Command:[docker container list --all --filter name='^/roottests3zerocopyreplication-.*-1$' --format '{{.ID}}:{{.Names}}']
+Unstopped containers: {}
+No running containers for project: roottests3zerocopyreplication
+Trying to prune unused networks...
+Trying to prune unused images...
+Command:[docker image prune -f]
+Stdout:Total reclaimed space: 0B
+Images pruned
+Trying to prune unused volumes...
+Command:[docker volume ls | wc -l]
+Stdout:1
+Volumes pruned: 1
+
+Setup directory for instance: node1
+Create directory for configuration generated in this helper
+Create directory for common tests configuration
+Copy common configuration from helpers
+Generate and write macros file
+Copy custom test config files ['/ClickHouse/tests/integration/test_s3_zero_copy_replication/configs/config.d/s3.xml'] to /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node1/configs/config.d
+Setup database dir /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node1/database
+Setup logs dir /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node1/logs
+Entrypoint cmd: ["clickhouse", "server", "--config-file=/etc/clickhouse-server/config.xml", "--log-file=/var/log/clickhouse-server/clickhouse-server.log", "--errorlog-file=/var/log/clickhouse-server/clickhouse-server.err.log", "--"]
+Setup directory for instance: node2
+Create directory for configuration generated in this helper
+Create directory for common tests configuration
+Copy common configuration from helpers
+Generate and write macros file
+Copy custom test config files ['/ClickHouse/tests/integration/test_s3_zero_copy_replication/configs/config.d/s3.xml'] to /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node2/configs/config.d
+Setup database dir /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node2/database
+Setup logs dir /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node2/logs
+Entrypoint cmd: ["clickhouse", "server", "--config-file=/etc/clickhouse-server/config.xml", "--log-file=/var/log/clickhouse-server/clickhouse-server.log", "--errorlog-file=/var/log/clickhouse-server/clickhouse-server.err.log", "--"]
+Env {'ASAN_OPTIONS': 'use_sigaltstack=0', 'TSAN_OPTIONS': 'use_sigaltstack=0', 'CLICKHOUSE_WATCHDOG_ENABLE': '0', 'CLICKHOUSE_NATS_TLS_SECURE': '0', 'LLVM_PROFILE_FILE': '/var/lib/clickhouse/server_%h_%p_%m.profraw', 'keeper_binary': '/clickhouse', 'keeper_cmd_prefix': 'clickhouse keeper', 'image': 'clickhouse/integration-test:latest', 'user': '0', 'keeper_fs': 'bind', 'keeper_logs_dir1': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper1/log', 'keeper_config_dir1': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper1/config', 'keeper_db_dir1': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper1/coordination', 'keeper_logs_dir2': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper2/log', 'keeper_config_dir2': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper2/config', 'keeper_db_dir2': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper2/coordination', 'keeper_logs_dir3': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper3/log', 'keeper_config_dir3': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper3/config', 'keeper_db_dir3': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper3/coordination', 'MINIO_CERTS_DIR': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/minio/certs', 'MINIO_DATA_DIR': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/minio/data', 'MINIO_PORT': '9001', 'SSL_CERT_FILE': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/minio/certs/public.crt', 'RESOLVER_LOGS': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/resolver', 'RESOLVER_LOGS_FS': 'bind'} stored in /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/.env
+Trying paths: ['/root/.docker/config.json', '/root/.dockercfg']
+No config file found
+Trying paths: ['/root/.docker/config.json', '/root/.dockercfg']
+No config file found
+http://localhost:None "GET /version HTTP/1.1" 200 828
+Command:[docker compose --env-file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/.env --project-name roottests3zerocopyreplication --file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node1/docker-compose.yml --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_keeper.yml --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_minio.yml --file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node2/docker-compose.yml pull]
+Stderr: zoo2 Skipped - Image is already being pulled by zoo3 
+Stderr: proxy2 Skipped - Image is already being pulled by proxy1 
+Stderr: node1 Skipped - Image is already being pulled by zoo3 
+Stderr: zoo1 Skipped - Image is already being pulled by zoo3 
+Stderr: node2 Skipped - Image is already being pulled by zoo3 
+Stderr: minio1 Pulling 
+Stderr: zoo3 Pulling 
+Stderr: resolver Pulling 
+Stderr: proxy1 Pulling 
+Stderr: proxy1 Pulled 
+Stderr: minio1 Pulled 
+Stderr: resolver Pulled 
+Stderr: zoo3 Pulled 
+Setup ZooKeeper
+Creating internal ZooKeeper dirs: ['/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper1/log', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper1/config', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper1/coordination', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper2/log', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper2/config', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper2/coordination', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper3/log', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper3/config', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper3/coordination']
+Command:[docker compose --project-name roottests3zerocopyreplication --env-file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/.env --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_keeper.yml --verbose up -d]
+Stderr:time="2024-11-22T09:24:37Z" level=trace msg="Docker Desktop integration not enabled"
+Stderr: Network roottests3zerocopyreplication_default  Creating
+Stderr: Network roottests3zerocopyreplication_default  Created
+Stderr: Container roottests3zerocopyreplication-zoo1-1  Creating
+Stderr: Container roottests3zerocopyreplication-zoo2-1  Creating
+Stderr: Container roottests3zerocopyreplication-zoo3-1  Creating
+Stderr: Container roottests3zerocopyreplication-zoo3-1  Created
+Stderr: Container roottests3zerocopyreplication-zoo2-1  Created
+Stderr: Container roottests3zerocopyreplication-zoo1-1  Created
+Stderr: Container roottests3zerocopyreplication-zoo1-1  Starting
+Stderr: Container roottests3zerocopyreplication-zoo2-1  Starting
+Stderr: Container roottests3zerocopyreplication-zoo3-1  Starting
+Stderr: Container roottests3zerocopyreplication-zoo1-1  Started
+Stderr: Container roottests3zerocopyreplication-zoo2-1  Started
+Stderr: Container roottests3zerocopyreplication-zoo3-1  Started
+Stderr:time="2024-11-22T09:24:37Z" level=debug msg="otel error" error="<nil>"
+Stderr:time="2024-11-22T09:24:37Z" level=debug msg="otel error" error="<nil>"
+Wait ZooKeeper to start
+get_instance_ip instance_name=zoo1
+http://localhost:None "GET /v1.46/containers/roottests3zerocopyreplication-zoo1-1/json HTTP/1.1" 200 None
+get_kazoo_client: zoo1, ip:172.16.1.3, port:2181, use_ssl:False
+Connecting to 172.16.1.3(172.16.1.3):2181, use_ssl: False
+Connection dropped: socket connection error: Connection refused
+Connecting to 172.16.1.3(172.16.1.3):2181, use_ssl: False
+Connection dropped: socket connection error: Connection refused
+Connecting to 172.16.1.3(172.16.1.3):2181, use_ssl: False
+Connection dropped: socket connection error: Connection refused
+Connecting to 172.16.1.3(172.16.1.3):2181, use_ssl: False
+Connection dropped: socket connection error: Connection refused
+Connecting to 172.16.1.3(172.16.1.3):2181, use_ssl: False
+Connection dropped: socket connection error: Connection refused
+Connecting to 172.16.1.3(172.16.1.3):2181, use_ssl: False
+Connection dropped: socket connection error: Connection refused
+Connecting to 172.16.1.3(172.16.1.3):2181, use_ssl: False
+Sending request(xid=None): Connect(protocol_version=0, last_zxid_seen=0, time_out=10000, session_id=0, passwd=b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00', read_only=None)
+Zookeeper connection established, state: CONNECTED
+Sending request(xid=1): GetChildren(path='/', watcher=None)
+Received response(xid=1): ['keeper']
+Sending request(xid=2): Close()
+Connection dropped: socket connection broken
+Transition to CONNECTING
+Zookeeper connection lost
+Failed connecting to Zookeeper within the connection retry policy.
+Zookeeper session closed, state: CLOSED
+get_instance_ip instance_name=zoo2
+http://localhost:None "GET /v1.46/containers/roottests3zerocopyreplication-zoo2-1/json HTTP/1.1" 200 None
+get_kazoo_client: zoo2, ip:172.16.1.2, port:2181, use_ssl:False
+Connecting to 172.16.1.2(172.16.1.2):2181, use_ssl: False
+Sending request(xid=None): Connect(protocol_version=0, last_zxid_seen=0, time_out=10000, session_id=0, passwd=b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00', read_only=None)
+Zookeeper connection established, state: CONNECTED
+Sending request(xid=1): GetChildren(path='/', watcher=None)
+Received response(xid=1): ['keeper']
+Sending request(xid=2): Close()
+Connection dropped: socket connection broken
+Transition to CONNECTING
+Zookeeper connection lost
+Failed connecting to Zookeeper within the connection retry policy.
+Zookeeper session closed, state: CLOSED
+get_instance_ip instance_name=zoo3
+http://localhost:None "GET /v1.46/containers/roottests3zerocopyreplication-zoo3-1/json HTTP/1.1" 200 None
+get_kazoo_client: zoo3, ip:172.16.1.4, port:2181, use_ssl:False
+Connecting to 172.16.1.4(172.16.1.4):2181, use_ssl: False
+Sending request(xid=None): Connect(protocol_version=0, last_zxid_seen=0, time_out=10000, session_id=0, passwd=b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00', read_only=None)
+Zookeeper connection established, state: CONNECTED
+Sending request(xid=1): GetChildren(path='/', watcher=None)
+Received response(xid=1): ['keeper']
+Sending request(xid=2): Close()
+Connection dropped: socket connection broken
+Transition to CONNECTING
+Zookeeper connection lost
+Failed connecting to Zookeeper within the connection retry policy.
+Zookeeper session closed, state: CLOSED
+All instances of ZooKeeper started: ('zoo1', 'zoo2', 'zoo3')
+Trying to create Minio instance by command docker compose --project-name roottests3zerocopyreplication --env-file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/.env --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_minio.yml --verbose up -d
+Command:[docker compose --project-name roottests3zerocopyreplication --env-file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/.env --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_minio.yml --verbose up -d]
+Stderr:time="2024-11-22T09:24:42Z" level=trace msg="Docker Desktop integration not enabled"
+Stderr: Volume "roottests3zerocopyreplication_data1-1"  Creating
+Stderr: Volume "roottests3zerocopyreplication_data1-1"  Created
+Stderr:time="2024-11-22T09:24:42Z" level=warning msg="Found orphan containers ([roottests3zerocopyreplication-zoo1-1 roottests3zerocopyreplication-zoo2-1 roottests3zerocopyreplication-zoo3-1]) for this project. If you removed or renamed this service in your compose file, you can run this command with the --remove-orphans flag to clean it up."
+Stderr: Container roottests3zerocopyreplication-proxy2-1  Creating
+Stderr: Container roottests3zerocopyreplication-proxy1-1  Creating
+Stderr: Container roottests3zerocopyreplication-proxy1-1  Created
+Stderr: Container roottests3zerocopyreplication-proxy2-1  Created
+Stderr: Container roottests3zerocopyreplication-minio1-1  Creating
+Stderr: Container roottests3zerocopyreplication-resolver-1  Creating
+Stderr: Container roottests3zerocopyreplication-minio1-1  Created
+Stderr: Container roottests3zerocopyreplication-resolver-1  Created
+Stderr: Container roottests3zerocopyreplication-proxy2-1  Starting
+Stderr: Container roottests3zerocopyreplication-proxy1-1  Starting
+Stderr: Container roottests3zerocopyreplication-proxy1-1  Started
+Stderr: Container roottests3zerocopyreplication-proxy2-1  Started
+Stderr: Container roottests3zerocopyreplication-resolver-1  Starting
+Stderr: Container roottests3zerocopyreplication-minio1-1  Starting
+Stderr: Container roottests3zerocopyreplication-resolver-1  Started
+Stderr: Container roottests3zerocopyreplication-minio1-1  Started
+Stderr:time="2024-11-22T09:24:44Z" level=debug msg="otel error" error="<nil>"
+Stderr:time="2024-11-22T09:24:44Z" level=debug msg="otel error" error="<nil>"
+Trying to connect to Minio...
+get_instance_ip instance_name=minio1
+http://localhost:None "GET /v1.46/containers/roottests3zerocopyreplication-minio1-1/json HTTP/1.1" 200 None
+get_instance_ip instance_name=proxy1
+http://localhost:None "GET /v1.46/containers/roottests3zerocopyreplication-proxy1-1/json HTTP/1.1" 200 None
+Starting new HTTP connection (1): 172.16.1.8:9001
+Incremented Retry for (url='/'): Retry(total=2, connect=None, read=None, redirect=None, status=None)
+Retrying (Retry(total=2, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError('<urllib3.connection.HTTPConnection object at 0x7f7982ec5120>: Failed to establish a new connection: [Errno 111] Connection refused')': /
+Starting new HTTP connection (2): 172.16.1.8:9001
+Incremented Retry for (url='/'): Retry(total=1, connect=None, read=None, redirect=None, status=None)
+Retrying (Retry(total=1, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError('<urllib3.connection.HTTPConnection object at 0x7f7982ec5360>: Failed to establish a new connection: [Errno 111] Connection refused')': /
+Starting new HTTP connection (3): 172.16.1.8:9001
+Incremented Retry for (url='/'): Retry(total=0, connect=None, read=None, redirect=None, status=None)
+Retrying (Retry(total=0, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError('<urllib3.connection.HTTPConnection object at 0x7f7982ec55a0>: Failed to establish a new connection: [Errno 111] Connection refused')': /
+Starting new HTTP connection (4): 172.16.1.8:9001
+Can't connect to Minio: HTTPConnectionPool(host='172.16.1.8', port=9001): Max retries exceeded with url: / (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x7f7982ec57e0>: Failed to establish a new connection: [Errno 111] Connection refused'))
+Starting new HTTP connection (5): 172.16.1.8:9001
+http://172.16.1.8:9001 "GET / HTTP/1.1" 200 0
+Connected to Minio.
+http://172.16.1.8:9001 "GET /root?location= HTTP/1.1" 404 0
+http://172.16.1.8:9001 "PUT /root HTTP/1.1" 200 0
+S3 bucket 'root' created
+http://172.16.1.8:9001 "GET /root2?location= HTTP/1.1" 404 0
+http://172.16.1.8:9001 "PUT /root2 HTTP/1.1" 200 0
+S3 bucket 'root2' created
+('Trying to create ClickHouse instance by command %s', 'docker compose --env-file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/.env --project-name roottests3zerocopyreplication --file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node1/docker-compose.yml --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_keeper.yml --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_minio.yml --file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node2/docker-compose.yml up -d --no-recreate')
+Command:[docker compose --env-file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/.env --project-name roottests3zerocopyreplication --file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node1/docker-compose.yml --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_keeper.yml --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_minio.yml --file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node2/docker-compose.yml up -d --no-recreate]
+Stderr: Container roottests3zerocopyreplication-proxy1-1  Running
+Stderr: Container roottests3zerocopyreplication-zoo3-1  Running
+Stderr: Container roottests3zerocopyreplication-zoo2-1  Running
+Stderr: Container roottests3zerocopyreplication-zoo1-1  Running
+Stderr: Container roottests3zerocopyreplication-proxy2-1  Running
+Stderr: Container roottests3zerocopyreplication-resolver-1  Running
+Stderr: Container roottests3zerocopyreplication-minio1-1  Running
+Stderr: Container roottests3zerocopyreplication-node1-1  Creating
+Stderr: Container roottests3zerocopyreplication-node2-1  Creating
+Stderr: Container roottests3zerocopyreplication-node2-1  Created
+Stderr: Container roottests3zerocopyreplication-node1-1  Created
+Stderr: Container roottests3zerocopyreplication-node1-1  Starting
+Stderr: Container roottests3zerocopyreplication-node2-1  Starting
+Stderr: Container roottests3zerocopyreplication-node1-1  Started
+Stderr: Container roottests3zerocopyreplication-node2-1  Started
+ClickHouse instance created
+get_instance_ip instance_name=node1
+http://localhost:None "GET /v1.46/containers/roottests3zerocopyreplication-node1-1/json HTTP/1.1" 200 None
+get_instance_ip instance_name=node1
+http://localhost:None "GET /v1.46/containers/roottests3zerocopyreplication-node1-1/json HTTP/1.1" 200 None
+Waiting for ClickHouse start in node1, ip: 172.16.1.9...
+http://localhost:None "GET /v1.46/containers/roottests3zerocopyreplication-node1-1/json HTTP/1.1" 200 None
+http://localhost:None "GET /v1.46/containers/a95c065dbbee4c48139b4086f7535dc2a26faf906160149f53b49fc7c3434300/json HTTP/1.1" 200 None
+http://localhost:None "GET /v1.46/containers/a95c065dbbee4c48139b4086f7535dc2a26faf906160149f53b49fc7c3434300/json HTTP/1.1" 200 None
+http://localhost:None "GET /v1.46/containers/a95c065dbbee4c48139b4086f7535dc2a26faf906160149f53b49fc7c3434300/json HTTP/1.1" 200 None
+http://localhost:None "GET /v1.46/containers/a95c065dbbee4c48139b4086f7535dc2a26faf906160149f53b49fc7c3434300/json HTTP/1.1" 200 None
+ClickHouse node1 started
+get_instance_ip instance_name=node2
+http://localhost:None "GET /v1.46/containers/roottests3zerocopyreplication-node2-1/json HTTP/1.1" 200 None
+get_instance_ip instance_name=node2
+http://localhost:None "GET /v1.46/containers/roottests3zerocopyreplication-node2-1/json HTTP/1.1" 200 None
+Waiting for ClickHouse start in node2, ip: 172.16.1.10...
+http://localhost:None "GET /v1.46/containers/roottests3zerocopyreplication-node2-1/json HTTP/1.1" 200 None
+http://localhost:None "GET /v1.46/containers/7ee9616bcb26c6f8f60060bec2f725db7c19ce0ddec4289b4e9fb36d669e4643/json HTTP/1.1" 200 None
+ClickHouse node2 started
+Cluster started
+------------------------------ Captured log setup ------------------------------
+2024-11-22 09:24:35 [ 584 ] DEBUG : Command:[docker ps | wc -l] (cluster.py:117, run_and_check)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Stdout:1 (cluster.py:141, run_and_check)
+2024-11-22 09:24:35 [ 584 ] DEBUG : No running containers (conftest.py:96, cleanup_environment)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Pruning Docker networks (conftest.py:98, cleanup_environment)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Command:[docker network prune --force] (cluster.py:117, run_and_check)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Command:[sysctl net.ipv4.ip_local_port_range='55000 65535'] (cluster.py:117, run_and_check)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Stdout:net.ipv4.ip_local_port_range = 55000 65535 (cluster.py:141, run_and_check)
+2024-11-22 09:24:35 [ 584 ] DEBUG : clickhouse_start_command: clickhouse server --config-file=/etc/clickhouse-server/{main_config_file} --log-file=/var/log/clickhouse-server/clickhouse-server.log --errorlog-file=/var/log/clickhouse-server/clickhouse-server.err.log (cluster.py:1702, add_instance)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Setup Keeper (cluster.py:1064, setup_keeper_cmd)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Cluster name: project_name:roottests3zerocopyreplication. Added instance name:node1 tag:latest base_cmd:['docker', 'compose', '--env-file', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/.env', '--project-name', 'roottests3zerocopyreplication', '--file', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node1/docker-compose.yml', '--file', '/ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_keeper.yml', '--file', '/ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_minio.yml'] docker_compose_yml_dir:/ClickHouse/tests/integration/helpers/../../../tests/integration/compose/ (cluster.py:1989, add_instance)
+2024-11-22 09:24:35 [ 584 ] DEBUG : clickhouse_start_command: clickhouse server --config-file=/etc/clickhouse-server/{main_config_file} --log-file=/var/log/clickhouse-server/clickhouse-server.log --errorlog-file=/var/log/clickhouse-server/clickhouse-server.err.log (cluster.py:1702, add_instance)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Cluster name: project_name:roottests3zerocopyreplication. Added instance name:node2 tag:latest base_cmd:['docker', 'compose', '--env-file', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/.env', '--project-name', 'roottests3zerocopyreplication', '--file', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node1/docker-compose.yml', '--file', '/ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_keeper.yml', '--file', '/ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_minio.yml', '--file', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node2/docker-compose.yml'] docker_compose_yml_dir:/ClickHouse/tests/integration/helpers/../../../tests/integration/compose/ (cluster.py:1989, add_instance)
+2024-11-22 09:24:35 [ 584 ] INFO : Starting cluster... (test.py:34, started_cluster)
+2024-11-22 09:24:35 [ 584 ] INFO : Running tests in /ClickHouse/tests/integration/test_s3_zero_copy_replication/test.py (cluster.py:2757, start)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Cluster start called. is_up=False (cluster.py:2764, start)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Docker networks for project roottests3zerocopyreplication are NETWORK ID   NAME      DRIVER    SCOPE
+ (cluster.py:868, print_all_docker_pieces)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Docker containers for project roottests3zerocopyreplication are CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS    PORTS     NAMES
+ (cluster.py:876, print_all_docker_pieces)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Docker volumes for project roottests3zerocopyreplication are DRIVER    VOLUME NAME
+ (cluster.py:884, print_all_docker_pieces)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Cleanup called (cluster.py:889, cleanup)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Docker networks for project roottests3zerocopyreplication are NETWORK ID   NAME      DRIVER    SCOPE
+ (cluster.py:868, print_all_docker_pieces)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Docker containers for project roottests3zerocopyreplication are CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS    PORTS     NAMES
+ (cluster.py:876, print_all_docker_pieces)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Docker volumes for project roottests3zerocopyreplication are DRIVER    VOLUME NAME
+ (cluster.py:884, print_all_docker_pieces)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Command:[docker container list --all --filter name='^/roottests3zerocopyreplication-.*-1$' --format '{{.ID}}:{{.Names}}'] (cluster.py:117, run_and_check)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Unstopped containers: {} (cluster.py:903, cleanup)
+2024-11-22 09:24:35 [ 584 ] DEBUG : No running containers for project: roottests3zerocopyreplication (cluster.py:917, cleanup)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Trying to prune unused networks... (cluster.py:923, cleanup)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Trying to prune unused images... (cluster.py:939, cleanup)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Command:[docker image prune -f] (cluster.py:117, run_and_check)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Stdout:Total reclaimed space: 0B (cluster.py:141, run_and_check)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Images pruned (cluster.py:942, cleanup)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Trying to prune unused volumes... (cluster.py:948, cleanup)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Command:[docker volume ls | wc -l] (cluster.py:117, run_and_check)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Stdout:1 (cluster.py:141, run_and_check)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Volumes pruned: 1
+ (cluster.py:953, cleanup)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Setup directory for instance: node1 (cluster.py:2777, start)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Create directory for configuration generated in this helper (cluster.py:4571, create_dir)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Create directory for common tests configuration (cluster.py:4576, create_dir)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Copy common configuration from helpers (cluster.py:4596, create_dir)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Generate and write macros file (cluster.py:4643, create_dir)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Copy custom test config files ['/ClickHouse/tests/integration/test_s3_zero_copy_replication/configs/config.d/s3.xml'] to /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node1/configs/config.d (cluster.py:4679, create_dir)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Setup database dir /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node1/database (cluster.py:4696, create_dir)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Setup logs dir /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node1/logs (cluster.py:4707, create_dir)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Entrypoint cmd: ["clickhouse", "server", "--config-file=/etc/clickhouse-server/config.xml", "--log-file=/var/log/clickhouse-server/clickhouse-server.log", "--errorlog-file=/var/log/clickhouse-server/clickhouse-server.err.log", "--"] (cluster.py:4791, create_dir)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Setup directory for instance: node2 (cluster.py:2777, start)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Create directory for configuration generated in this helper (cluster.py:4571, create_dir)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Create directory for common tests configuration (cluster.py:4576, create_dir)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Copy common configuration from helpers (cluster.py:4596, create_dir)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Generate and write macros file (cluster.py:4643, create_dir)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Copy custom test config files ['/ClickHouse/tests/integration/test_s3_zero_copy_replication/configs/config.d/s3.xml'] to /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node2/configs/config.d (cluster.py:4679, create_dir)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Setup database dir /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node2/database (cluster.py:4696, create_dir)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Setup logs dir /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node2/logs (cluster.py:4707, create_dir)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Entrypoint cmd: ["clickhouse", "server", "--config-file=/etc/clickhouse-server/config.xml", "--log-file=/var/log/clickhouse-server/clickhouse-server.log", "--errorlog-file=/var/log/clickhouse-server/clickhouse-server.err.log", "--"] (cluster.py:4791, create_dir)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Env {'ASAN_OPTIONS': 'use_sigaltstack=0', 'TSAN_OPTIONS': 'use_sigaltstack=0', 'CLICKHOUSE_WATCHDOG_ENABLE': '0', 'CLICKHOUSE_NATS_TLS_SECURE': '0', 'LLVM_PROFILE_FILE': '/var/lib/clickhouse/server_%h_%p_%m.profraw', 'keeper_binary': '/clickhouse', 'keeper_cmd_prefix': 'clickhouse keeper', 'image': 'clickhouse/integration-test:latest', 'user': '0', 'keeper_fs': 'bind', 'keeper_logs_dir1': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper1/log', 'keeper_config_dir1': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper1/config', 'keeper_db_dir1': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper1/coordination', 'keeper_logs_dir2': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper2/log', 'keeper_config_dir2': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper2/config', 'keeper_db_dir2': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper2/coordination', 'keeper_logs_dir3': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper3/log', 'keeper_config_dir3': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper3/config', 'keeper_db_dir3': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper3/coordination', 'MINIO_CERTS_DIR': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/minio/certs', 'MINIO_DATA_DIR': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/minio/data', 'MINIO_PORT': '9001', 'SSL_CERT_FILE': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/minio/certs/public.crt', 'RESOLVER_LOGS': '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/resolver', 'RESOLVER_LOGS_FS': 'bind'} stored in /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/.env (cluster.py:92, _create_env_file)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Trying paths: ['/root/.docker/config.json', '/root/.dockercfg'] (config.py:21, find_config_file)
+2024-11-22 09:24:35 [ 584 ] DEBUG : No config file found (config.py:28, find_config_file)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Trying paths: ['/root/.docker/config.json', '/root/.dockercfg'] (config.py:21, find_config_file)
+2024-11-22 09:24:35 [ 584 ] DEBUG : No config file found (config.py:28, find_config_file)
+2024-11-22 09:24:35 [ 584 ] DEBUG : http://localhost:None "GET /version HTTP/1.1" 200 828 (connectionpool.py:547, _make_request)
+2024-11-22 09:24:35 [ 584 ] DEBUG : Command:[docker compose --env-file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/.env --project-name roottests3zerocopyreplication --file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node1/docker-compose.yml --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_keeper.yml --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_minio.yml --file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node2/docker-compose.yml pull] (cluster.py:117, run_and_check)
+2024-11-22 09:24:36 [ 584 ] DEBUG : Stderr: zoo2 Skipped - Image is already being pulled by zoo3  (cluster.py:143, run_and_check)
+2024-11-22 09:24:36 [ 584 ] DEBUG : Stderr: proxy2 Skipped - Image is already being pulled by proxy1  (cluster.py:143, run_and_check)
+2024-11-22 09:24:36 [ 584 ] DEBUG : Stderr: node1 Skipped - Image is already being pulled by zoo3  (cluster.py:143, run_and_check)
+2024-11-22 09:24:36 [ 584 ] DEBUG : Stderr: zoo1 Skipped - Image is already being pulled by zoo3  (cluster.py:143, run_and_check)
+2024-11-22 09:24:36 [ 584 ] DEBUG : Stderr: node2 Skipped - Image is already being pulled by zoo3  (cluster.py:143, run_and_check)
+2024-11-22 09:24:36 [ 584 ] DEBUG : Stderr: minio1 Pulling  (cluster.py:143, run_and_check)
+2024-11-22 09:24:36 [ 584 ] DEBUG : Stderr: zoo3 Pulling  (cluster.py:143, run_and_check)
+2024-11-22 09:24:36 [ 584 ] DEBUG : Stderr: resolver Pulling  (cluster.py:143, run_and_check)
+2024-11-22 09:24:36 [ 584 ] DEBUG : Stderr: proxy1 Pulling  (cluster.py:143, run_and_check)
+2024-11-22 09:24:36 [ 584 ] DEBUG : Stderr: proxy1 Pulled  (cluster.py:143, run_and_check)
+2024-11-22 09:24:36 [ 584 ] DEBUG : Stderr: minio1 Pulled  (cluster.py:143, run_and_check)
+2024-11-22 09:24:36 [ 584 ] DEBUG : Stderr: resolver Pulled  (cluster.py:143, run_and_check)
+2024-11-22 09:24:36 [ 584 ] DEBUG : Stderr: zoo3 Pulled  (cluster.py:143, run_and_check)
+2024-11-22 09:24:36 [ 584 ] DEBUG : Setup ZooKeeper (cluster.py:2818, start)
+2024-11-22 09:24:36 [ 584 ] DEBUG : Creating internal ZooKeeper dirs: ['/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper1/log', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper1/config', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper1/coordination', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper2/log', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper2/config', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper2/coordination', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper3/log', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper3/config', '/ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/keeper3/coordination'] (cluster.py:2819, start)
+2024-11-22 09:24:36 [ 584 ] DEBUG : Command:[docker compose --project-name roottests3zerocopyreplication --env-file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/.env --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_keeper.yml --verbose up -d] (cluster.py:117, run_and_check)
+2024-11-22 09:24:37 [ 584 ] DEBUG : Stderr:time="2024-11-22T09:24:37Z" level=trace msg="Docker Desktop integration not enabled" (cluster.py:143, run_and_check)
+2024-11-22 09:24:37 [ 584 ] DEBUG : Stderr: Network roottests3zerocopyreplication_default  Creating (cluster.py:143, run_and_check)
+2024-11-22 09:24:37 [ 584 ] DEBUG : Stderr: Network roottests3zerocopyreplication_default  Created (cluster.py:143, run_and_check)
+2024-11-22 09:24:37 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo1-1  Creating (cluster.py:143, run_and_check)
+2024-11-22 09:24:37 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo2-1  Creating (cluster.py:143, run_and_check)
+2024-11-22 09:24:37 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo3-1  Creating (cluster.py:143, run_and_check)
+2024-11-22 09:24:37 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo3-1  Created (cluster.py:143, run_and_check)
+2024-11-22 09:24:37 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo2-1  Created (cluster.py:143, run_and_check)
+2024-11-22 09:24:37 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo1-1  Created (cluster.py:143, run_and_check)
+2024-11-22 09:24:37 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo1-1  Starting (cluster.py:143, run_and_check)
+2024-11-22 09:24:37 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo2-1  Starting (cluster.py:143, run_and_check)
+2024-11-22 09:24:37 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo3-1  Starting (cluster.py:143, run_and_check)
+2024-11-22 09:24:37 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo1-1  Started (cluster.py:143, run_and_check)
+2024-11-22 09:24:37 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo2-1  Started (cluster.py:143, run_and_check)
+2024-11-22 09:24:37 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo3-1  Started (cluster.py:143, run_and_check)
+2024-11-22 09:24:37 [ 584 ] DEBUG : Stderr:time="2024-11-22T09:24:37Z" level=debug msg="otel error" error="<nil>" (cluster.py:143, run_and_check)
+2024-11-22 09:24:37 [ 584 ] DEBUG : Stderr:time="2024-11-22T09:24:37Z" level=debug msg="otel error" error="<nil>" (cluster.py:143, run_and_check)
+2024-11-22 09:24:37 [ 584 ] DEBUG : Wait ZooKeeper to start (cluster.py:2430, wait_zookeeper_to_start)
+2024-11-22 09:24:37 [ 584 ] DEBUG : get_instance_ip instance_name=zoo1 (cluster.py:2046, get_instance_ip)
+2024-11-22 09:24:37 [ 584 ] DEBUG : http://localhost:None "GET /v1.46/containers/roottests3zerocopyreplication-zoo1-1/json HTTP/1.1" 200 None (connectionpool.py:547, _make_request)
+2024-11-22 09:24:37 [ 584 ] DEBUG : get_kazoo_client: zoo1, ip:172.16.1.3, port:2181, use_ssl:False (cluster.py:3305, get_kazoo_client)
+2024-11-22 09:24:37 [ 584 ] INFO : Connecting to 172.16.1.3(172.16.1.3):2181, use_ssl: False (connection.py:650, _connect)
+2024-11-22 09:24:37 [ 584 ] WARNING : Connection dropped: socket connection error: Connection refused (connection.py:622, _connect_attempt)
+2024-11-22 09:24:38 [ 584 ] INFO : Connecting to 172.16.1.3(172.16.1.3):2181, use_ssl: False (connection.py:650, _connect)
+2024-11-22 09:24:38 [ 584 ] WARNING : Connection dropped: socket connection error: Connection refused (connection.py:622, _connect_attempt)
+2024-11-22 09:24:38 [ 584 ] INFO : Connecting to 172.16.1.3(172.16.1.3):2181, use_ssl: False (connection.py:650, _connect)
+2024-11-22 09:24:38 [ 584 ] WARNING : Connection dropped: socket connection error: Connection refused (connection.py:622, _connect_attempt)
+2024-11-22 09:24:38 [ 584 ] INFO : Connecting to 172.16.1.3(172.16.1.3):2181, use_ssl: False (connection.py:650, _connect)
+2024-11-22 09:24:38 [ 584 ] WARNING : Connection dropped: socket connection error: Connection refused (connection.py:622, _connect_attempt)
+2024-11-22 09:24:39 [ 584 ] INFO : Connecting to 172.16.1.3(172.16.1.3):2181, use_ssl: False (connection.py:650, _connect)
+2024-11-22 09:24:39 [ 584 ] WARNING : Connection dropped: socket connection error: Connection refused (connection.py:622, _connect_attempt)
+2024-11-22 09:24:40 [ 584 ] INFO : Connecting to 172.16.1.3(172.16.1.3):2181, use_ssl: False (connection.py:650, _connect)
+2024-11-22 09:24:40 [ 584 ] WARNING : Connection dropped: socket connection error: Connection refused (connection.py:622, _connect_attempt)
+2024-11-22 09:24:42 [ 584 ] INFO : Connecting to 172.16.1.3(172.16.1.3):2181, use_ssl: False (connection.py:650, _connect)
+2024-11-22 09:24:42 [ 584 ] DEBUG : Sending request(xid=None): Connect(protocol_version=0, last_zxid_seen=0, time_out=10000, session_id=0, passwd=b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00', read_only=None) (connection.py:312, _submit)
+2024-11-22 09:24:42 [ 584 ] INFO : Zookeeper connection established, state: CONNECTED (client.py:532, _session_callback)
+2024-11-22 09:24:42 [ 584 ] DEBUG : Sending request(xid=1): GetChildren(path='/', watcher=None) (connection.py:312, _submit)
+2024-11-22 09:24:42 [ 584 ] DEBUG : Received response(xid=1): ['keeper'] (connection.py:410, _read_response)
+2024-11-22 09:24:42 [ 584 ] DEBUG : Sending request(xid=2): Close() (connection.py:312, _submit)
+2024-11-22 09:24:42 [ 584 ] WARNING : Connection dropped: socket connection broken (connection.py:622, _connect_attempt)
+2024-11-22 09:24:42 [ 584 ] WARNING : Transition to CONNECTING (connection.py:626, _connect_attempt)
+2024-11-22 09:24:42 [ 584 ] INFO : Zookeeper connection lost (client.py:543, _session_callback)
+2024-11-22 09:24:42 [ 584 ] WARNING : Failed connecting to Zookeeper within the connection retry policy. (connection.py:515, zk_loop)
+2024-11-22 09:24:42 [ 584 ] INFO : Zookeeper session closed, state: CLOSED (client.py:537, _session_callback)
+2024-11-22 09:24:42 [ 584 ] DEBUG : get_instance_ip instance_name=zoo2 (cluster.py:2046, get_instance_ip)
+2024-11-22 09:24:42 [ 584 ] DEBUG : http://localhost:None "GET /v1.46/containers/roottests3zerocopyreplication-zoo2-1/json HTTP/1.1" 200 None (connectionpool.py:547, _make_request)
+2024-11-22 09:24:42 [ 584 ] DEBUG : get_kazoo_client: zoo2, ip:172.16.1.2, port:2181, use_ssl:False (cluster.py:3305, get_kazoo_client)
+2024-11-22 09:24:42 [ 584 ] INFO : Connecting to 172.16.1.2(172.16.1.2):2181, use_ssl: False (connection.py:650, _connect)
+2024-11-22 09:24:42 [ 584 ] DEBUG : Sending request(xid=None): Connect(protocol_version=0, last_zxid_seen=0, time_out=10000, session_id=0, passwd=b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00', read_only=None) (connection.py:312, _submit)
+2024-11-22 09:24:42 [ 584 ] INFO : Zookeeper connection established, state: CONNECTED (client.py:532, _session_callback)
+2024-11-22 09:24:42 [ 584 ] DEBUG : Sending request(xid=1): GetChildren(path='/', watcher=None) (connection.py:312, _submit)
+2024-11-22 09:24:42 [ 584 ] DEBUG : Received response(xid=1): ['keeper'] (connection.py:410, _read_response)
+2024-11-22 09:24:42 [ 584 ] DEBUG : Sending request(xid=2): Close() (connection.py:312, _submit)
+2024-11-22 09:24:42 [ 584 ] WARNING : Connection dropped: socket connection broken (connection.py:622, _connect_attempt)
+2024-11-22 09:24:42 [ 584 ] WARNING : Transition to CONNECTING (connection.py:626, _connect_attempt)
+2024-11-22 09:24:42 [ 584 ] INFO : Zookeeper connection lost (client.py:543, _session_callback)
+2024-11-22 09:24:42 [ 584 ] WARNING : Failed connecting to Zookeeper within the connection retry policy. (connection.py:515, zk_loop)
+2024-11-22 09:24:42 [ 584 ] INFO : Zookeeper session closed, state: CLOSED (client.py:537, _session_callback)
+2024-11-22 09:24:42 [ 584 ] DEBUG : get_instance_ip instance_name=zoo3 (cluster.py:2046, get_instance_ip)
+2024-11-22 09:24:42 [ 584 ] DEBUG : http://localhost:None "GET /v1.46/containers/roottests3zerocopyreplication-zoo3-1/json HTTP/1.1" 200 None (connectionpool.py:547, _make_request)
+2024-11-22 09:24:42 [ 584 ] DEBUG : get_kazoo_client: zoo3, ip:172.16.1.4, port:2181, use_ssl:False (cluster.py:3305, get_kazoo_client)
+2024-11-22 09:24:42 [ 584 ] INFO : Connecting to 172.16.1.4(172.16.1.4):2181, use_ssl: False (connection.py:650, _connect)
+2024-11-22 09:24:42 [ 584 ] DEBUG : Sending request(xid=None): Connect(protocol_version=0, last_zxid_seen=0, time_out=10000, session_id=0, passwd=b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00', read_only=None) (connection.py:312, _submit)
+2024-11-22 09:24:42 [ 584 ] INFO : Zookeeper connection established, state: CONNECTED (client.py:532, _session_callback)
+2024-11-22 09:24:42 [ 584 ] DEBUG : Sending request(xid=1): GetChildren(path='/', watcher=None) (connection.py:312, _submit)
+2024-11-22 09:24:42 [ 584 ] DEBUG : Received response(xid=1): ['keeper'] (connection.py:410, _read_response)
+2024-11-22 09:24:42 [ 584 ] DEBUG : Sending request(xid=2): Close() (connection.py:312, _submit)
+2024-11-22 09:24:42 [ 584 ] WARNING : Connection dropped: socket connection broken (connection.py:622, _connect_attempt)
+2024-11-22 09:24:42 [ 584 ] WARNING : Transition to CONNECTING (connection.py:626, _connect_attempt)
+2024-11-22 09:24:42 [ 584 ] INFO : Zookeeper connection lost (client.py:543, _session_callback)
+2024-11-22 09:24:42 [ 584 ] WARNING : Failed connecting to Zookeeper within the connection retry policy. (connection.py:515, zk_loop)
+2024-11-22 09:24:42 [ 584 ] INFO : Zookeeper session closed, state: CLOSED (client.py:537, _session_callback)
+2024-11-22 09:24:42 [ 584 ] DEBUG : All instances of ZooKeeper started: ('zoo1', 'zoo2', 'zoo3') (cluster.py:2446, wait_zookeeper_nodes_to_start)
+2024-11-22 09:24:42 [ 584 ] INFO : Trying to create Minio instance by command docker compose --project-name roottests3zerocopyreplication --env-file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/.env --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_minio.yml --verbose up -d (cluster.py:3096, start)
+2024-11-22 09:24:42 [ 584 ] DEBUG : Command:[docker compose --project-name roottests3zerocopyreplication --env-file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/.env --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_minio.yml --verbose up -d] (cluster.py:117, run_and_check)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Stderr:time="2024-11-22T09:24:42Z" level=trace msg="Docker Desktop integration not enabled" (cluster.py:143, run_and_check)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Stderr: Volume "roottests3zerocopyreplication_data1-1"  Creating (cluster.py:143, run_and_check)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Stderr: Volume "roottests3zerocopyreplication_data1-1"  Created (cluster.py:143, run_and_check)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Stderr:time="2024-11-22T09:24:42Z" level=warning msg="Found orphan containers ([roottests3zerocopyreplication-zoo1-1 roottests3zerocopyreplication-zoo2-1 roottests3zerocopyreplication-zoo3-1]) for this project. If you removed or renamed this service in your compose file, you can run this command with the --remove-orphans flag to clean it up." (cluster.py:143, run_and_check)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-proxy2-1  Creating (cluster.py:143, run_and_check)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-proxy1-1  Creating (cluster.py:143, run_and_check)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-proxy1-1  Created (cluster.py:143, run_and_check)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-proxy2-1  Created (cluster.py:143, run_and_check)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-minio1-1  Creating (cluster.py:143, run_and_check)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-resolver-1  Creating (cluster.py:143, run_and_check)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-minio1-1  Created (cluster.py:143, run_and_check)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-resolver-1  Created (cluster.py:143, run_and_check)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-proxy2-1  Starting (cluster.py:143, run_and_check)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-proxy1-1  Starting (cluster.py:143, run_and_check)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-proxy1-1  Started (cluster.py:143, run_and_check)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-proxy2-1  Started (cluster.py:143, run_and_check)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-resolver-1  Starting (cluster.py:143, run_and_check)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-minio1-1  Starting (cluster.py:143, run_and_check)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-resolver-1  Started (cluster.py:143, run_and_check)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-minio1-1  Started (cluster.py:143, run_and_check)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Stderr:time="2024-11-22T09:24:44Z" level=debug msg="otel error" error="<nil>" (cluster.py:143, run_and_check)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Stderr:time="2024-11-22T09:24:44Z" level=debug msg="otel error" error="<nil>" (cluster.py:143, run_and_check)
+2024-11-22 09:24:44 [ 584 ] INFO : Trying to connect to Minio... (cluster.py:3102, start)
+2024-11-22 09:24:44 [ 584 ] DEBUG : get_instance_ip instance_name=minio1 (cluster.py:2046, get_instance_ip)
+2024-11-22 09:24:44 [ 584 ] DEBUG : http://localhost:None "GET /v1.46/containers/roottests3zerocopyreplication-minio1-1/json HTTP/1.1" 200 None (connectionpool.py:547, _make_request)
+2024-11-22 09:24:44 [ 584 ] DEBUG : get_instance_ip instance_name=proxy1 (cluster.py:2046, get_instance_ip)
+2024-11-22 09:24:44 [ 584 ] DEBUG : http://localhost:None "GET /v1.46/containers/roottests3zerocopyreplication-proxy1-1/json HTTP/1.1" 200 None (connectionpool.py:547, _make_request)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Starting new HTTP connection (1): 172.16.1.8:9001 (connectionpool.py:245, _new_conn)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Incremented Retry for (url='/'): Retry(total=2, connect=None, read=None, redirect=None, status=None) (retry.py:517, increment)
+2024-11-22 09:24:44 [ 584 ] WARNING : Retrying (Retry(total=2, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError('<urllib3.connection.HTTPConnection object at 0x7f7982ec5120>: Failed to establish a new connection: [Errno 111] Connection refused')': / (connectionpool.py:872, urlopen)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Starting new HTTP connection (2): 172.16.1.8:9001 (connectionpool.py:245, _new_conn)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Incremented Retry for (url='/'): Retry(total=1, connect=None, read=None, redirect=None, status=None) (retry.py:517, increment)
+2024-11-22 09:24:44 [ 584 ] WARNING : Retrying (Retry(total=1, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError('<urllib3.connection.HTTPConnection object at 0x7f7982ec5360>: Failed to establish a new connection: [Errno 111] Connection refused')': / (connectionpool.py:872, urlopen)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Starting new HTTP connection (3): 172.16.1.8:9001 (connectionpool.py:245, _new_conn)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Incremented Retry for (url='/'): Retry(total=0, connect=None, read=None, redirect=None, status=None) (retry.py:517, increment)
+2024-11-22 09:24:44 [ 584 ] WARNING : Retrying (Retry(total=0, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError('<urllib3.connection.HTTPConnection object at 0x7f7982ec55a0>: Failed to establish a new connection: [Errno 111] Connection refused')': / (connectionpool.py:872, urlopen)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Starting new HTTP connection (4): 172.16.1.8:9001 (connectionpool.py:245, _new_conn)
+2024-11-22 09:24:44 [ 584 ] DEBUG : Can't connect to Minio: HTTPConnectionPool(host='172.16.1.8', port=9001): Max retries exceeded with url: / (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x7f7982ec57e0>: Failed to establish a new connection: [Errno 111] Connection refused')) (cluster.py:2601, wait_minio_to_start)
+2024-11-22 09:24:45 [ 584 ] DEBUG : Starting new HTTP connection (5): 172.16.1.8:9001 (connectionpool.py:245, _new_conn)
+2024-11-22 09:24:45 [ 584 ] DEBUG : http://172.16.1.8:9001 "GET / HTTP/1.1" 200 0 (connectionpool.py:547, _make_request)
+2024-11-22 09:24:45 [ 584 ] DEBUG : Connected to Minio. (cluster.py:2581, wait_minio_to_start)
+2024-11-22 09:24:45 [ 584 ] DEBUG : http://172.16.1.8:9001 "GET /root?location= HTTP/1.1" 404 0 (connectionpool.py:547, _make_request)
+2024-11-22 09:24:45 [ 584 ] DEBUG : http://172.16.1.8:9001 "PUT /root HTTP/1.1" 200 0 (connectionpool.py:547, _make_request)
+2024-11-22 09:24:45 [ 584 ] DEBUG : S3 bucket 'root' created (cluster.py:2596, wait_minio_to_start)
+2024-11-22 09:24:45 [ 584 ] DEBUG : http://172.16.1.8:9001 "GET /root2?location= HTTP/1.1" 404 0 (connectionpool.py:547, _make_request)
+2024-11-22 09:24:45 [ 584 ] DEBUG : http://172.16.1.8:9001 "PUT /root2 HTTP/1.1" 200 0 (connectionpool.py:547, _make_request)
+2024-11-22 09:24:45 [ 584 ] DEBUG : S3 bucket 'root2' created (cluster.py:2596, wait_minio_to_start)
+2024-11-22 09:24:45 [ 584 ] DEBUG : ('Trying to create ClickHouse instance by command %s', 'docker compose --env-file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/.env --project-name roottests3zerocopyreplication --file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node1/docker-compose.yml --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_keeper.yml --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_minio.yml --file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node2/docker-compose.yml up -d --no-recreate') (cluster.py:3164, start)
+2024-11-22 09:24:45 [ 584 ] DEBUG : Command:[docker compose --env-file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/.env --project-name roottests3zerocopyreplication --file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node1/docker-compose.yml --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_keeper.yml --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_minio.yml --file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node2/docker-compose.yml up -d --no-recreate] (cluster.py:117, run_and_check)
+2024-11-22 09:24:46 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-proxy1-1  Running (cluster.py:143, run_and_check)
+2024-11-22 09:24:46 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo3-1  Running (cluster.py:143, run_and_check)
+2024-11-22 09:24:46 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo2-1  Running (cluster.py:143, run_and_check)
+2024-11-22 09:24:46 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo1-1  Running (cluster.py:143, run_and_check)
+2024-11-22 09:24:46 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-proxy2-1  Running (cluster.py:143, run_and_check)
+2024-11-22 09:24:46 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-resolver-1  Running (cluster.py:143, run_and_check)
+2024-11-22 09:24:46 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-minio1-1  Running (cluster.py:143, run_and_check)
+2024-11-22 09:24:46 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-node1-1  Creating (cluster.py:143, run_and_check)
+2024-11-22 09:24:46 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-node2-1  Creating (cluster.py:143, run_and_check)
+2024-11-22 09:24:46 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-node2-1  Created (cluster.py:143, run_and_check)
+2024-11-22 09:24:46 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-node1-1  Created (cluster.py:143, run_and_check)
+2024-11-22 09:24:46 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-node1-1  Starting (cluster.py:143, run_and_check)
+2024-11-22 09:24:46 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-node2-1  Starting (cluster.py:143, run_and_check)
+2024-11-22 09:24:46 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-node1-1  Started (cluster.py:143, run_and_check)
+2024-11-22 09:24:46 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-node2-1  Started (cluster.py:143, run_and_check)
+2024-11-22 09:24:46 [ 584 ] DEBUG : ClickHouse instance created (cluster.py:3172, start)
+2024-11-22 09:24:46 [ 584 ] DEBUG : get_instance_ip instance_name=node1 (cluster.py:2046, get_instance_ip)
+2024-11-22 09:24:46 [ 584 ] DEBUG : http://localhost:None "GET /v1.46/containers/roottests3zerocopyreplication-node1-1/json HTTP/1.1" 200 None (connectionpool.py:547, _make_request)
+2024-11-22 09:24:46 [ 584 ] DEBUG : get_instance_ip instance_name=node1 (cluster.py:2056, get_instance_global_ipv6)
+2024-11-22 09:24:46 [ 584 ] DEBUG : http://localhost:None "GET /v1.46/containers/roottests3zerocopyreplication-node1-1/json HTTP/1.1" 200 None (connectionpool.py:547, _make_request)
+2024-11-22 09:24:46 [ 584 ] DEBUG : Waiting for ClickHouse start in node1, ip: 172.16.1.9... (cluster.py:3180, start)
+2024-11-22 09:24:46 [ 584 ] DEBUG : http://localhost:None "GET /v1.46/containers/roottests3zerocopyreplication-node1-1/json HTTP/1.1" 200 None (connectionpool.py:547, _make_request)
+2024-11-22 09:24:46 [ 584 ] DEBUG : http://localhost:None "GET /v1.46/containers/a95c065dbbee4c48139b4086f7535dc2a26faf906160149f53b49fc7c3434300/json HTTP/1.1" 200 None (connectionpool.py:547, _make_request)
+2024-11-22 09:24:46 [ 584 ] DEBUG : http://localhost:None "GET /v1.46/containers/a95c065dbbee4c48139b4086f7535dc2a26faf906160149f53b49fc7c3434300/json HTTP/1.1" 200 None (connectionpool.py:547, _make_request)
+2024-11-22 09:24:46 [ 584 ] DEBUG : http://localhost:None "GET /v1.46/containers/a95c065dbbee4c48139b4086f7535dc2a26faf906160149f53b49fc7c3434300/json HTTP/1.1" 200 None (connectionpool.py:547, _make_request)
+2024-11-22 09:24:46 [ 584 ] DEBUG : http://localhost:None "GET /v1.46/containers/a95c065dbbee4c48139b4086f7535dc2a26faf906160149f53b49fc7c3434300/json HTTP/1.1" 200 None (connectionpool.py:547, _make_request)
+2024-11-22 09:24:46 [ 584 ] DEBUG : ClickHouse node1 started (cluster.py:3184, start)
+2024-11-22 09:24:46 [ 584 ] DEBUG : get_instance_ip instance_name=node2 (cluster.py:2046, get_instance_ip)
+2024-11-22 09:24:46 [ 584 ] DEBUG : http://localhost:None "GET /v1.46/containers/roottests3zerocopyreplication-node2-1/json HTTP/1.1" 200 None (connectionpool.py:547, _make_request)
+2024-11-22 09:24:46 [ 584 ] DEBUG : get_instance_ip instance_name=node2 (cluster.py:2056, get_instance_global_ipv6)
+2024-11-22 09:24:46 [ 584 ] DEBUG : http://localhost:None "GET /v1.46/containers/roottests3zerocopyreplication-node2-1/json HTTP/1.1" 200 None (connectionpool.py:547, _make_request)
+2024-11-22 09:24:46 [ 584 ] DEBUG : Waiting for ClickHouse start in node2, ip: 172.16.1.10... (cluster.py:3180, start)
+2024-11-22 09:24:46 [ 584 ] DEBUG : http://localhost:None "GET /v1.46/containers/roottests3zerocopyreplication-node2-1/json HTTP/1.1" 200 None (connectionpool.py:547, _make_request)
+2024-11-22 09:24:46 [ 584 ] DEBUG : http://localhost:None "GET /v1.46/containers/7ee9616bcb26c6f8f60060bec2f725db7c19ce0ddec4289b4e9fb36d669e4643/json HTTP/1.1" 200 None (connectionpool.py:547, _make_request)
+2024-11-22 09:24:46 [ 584 ] DEBUG : ClickHouse node2 started (cluster.py:3184, start)
+2024-11-22 09:24:46 [ 584 ] INFO : Cluster started (test.py:36, started_cluster)
+----------------------------- Captured stderr call -----------------------------
+Executing query b"\n        CREATE TABLE table_test_encoding ON CLUSTER test_cluster (`\xef\xf0\xe8\xe2\xe5\xf2` UInt64, date DateTime)\n        ENGINE=ReplicatedMergeTree('/clickhouse/tables/table_test_encoding', '{replica}')\n        ORDER BY date PARTITION BY date\n        SETTINGS storage_policy='hybrid'\n        " on node1
+------------------------------ Captured log call -------------------------------
+2024-11-22 09:24:46 [ 584 ] DEBUG : Executing query b"\n        CREATE TABLE table_test_encoding ON CLUSTER test_cluster (`\xef\xf0\xe8\xe2\xe5\xf2` UInt64, date DateTime)\n        ENGINE=ReplicatedMergeTree('/clickhouse/tables/table_test_encoding', '{replica}')\n        ORDER BY date PARTITION BY date\n        SETTINGS storage_policy='hybrid'\n        " on node1 (cluster.py:3630, query)
+--------------------------- Captured stderr teardown ---------------------------
+Command:[docker compose --env-file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/.env --project-name roottests3zerocopyreplication --file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node1/docker-compose.yml --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_keeper.yml --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_minio.yml --file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node2/docker-compose.yml stop --timeout 20]
+Stderr: Container roottests3zerocopyreplication-node1-1  Stopping
+Stderr: Container roottests3zerocopyreplication-node2-1  Stopping
+Stderr: Container roottests3zerocopyreplication-resolver-1  Stopping
+Stderr: Container roottests3zerocopyreplication-node2-1  Stopped
+Stderr: Container roottests3zerocopyreplication-node1-1  Stopped
+Stderr: Container roottests3zerocopyreplication-zoo1-1  Stopping
+Stderr: Container roottests3zerocopyreplication-zoo2-1  Stopping
+Stderr: Container roottests3zerocopyreplication-zoo3-1  Stopping
+Stderr: Container roottests3zerocopyreplication-minio1-1  Stopping
+Stderr: Container roottests3zerocopyreplication-minio1-1  Stopped
+Stderr: Container roottests3zerocopyreplication-zoo3-1  Stopped
+Stderr: Container roottests3zerocopyreplication-zoo1-1  Stopped
+Stderr: Container roottests3zerocopyreplication-zoo2-1  Stopped
+Stderr: Container roottests3zerocopyreplication-resolver-1  Stopped
+Stderr: Container roottests3zerocopyreplication-proxy2-1  Stopping
+Stderr: Container roottests3zerocopyreplication-proxy1-1  Stopping
+Stderr: Container roottests3zerocopyreplication-proxy1-1  Stopped
+Stderr: Container roottests3zerocopyreplication-proxy2-1  Stopped
+Command:[bash -c [ -f /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node1/logs/stderr.log ] && zgrep -aH "==================" /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node1/logs/stderr.log* | ( [ -z "" ] && cat || grep -v "$" ) || true]
+Command:[bash -c [ -f /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node2/logs/stderr.log ] && zgrep -aH "==================" /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node2/logs/stderr.log* | ( [ -z "" ] && cat || grep -v "$" ) || true]
+Command:[docker compose --env-file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/.env --project-name roottests3zerocopyreplication --file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node1/docker-compose.yml --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_keeper.yml --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_minio.yml --file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node2/docker-compose.yml down --volumes]
+Stderr: Container roottests3zerocopyreplication-node2-1  Stopping
+Stderr: Container roottests3zerocopyreplication-node1-1  Stopping
+Stderr: Container roottests3zerocopyreplication-resolver-1  Stopping
+Stderr: Container roottests3zerocopyreplication-node2-1  Stopped
+Stderr: Container roottests3zerocopyreplication-node2-1  Removing
+Stderr: Container roottests3zerocopyreplication-resolver-1  Stopped
+Stderr: Container roottests3zerocopyreplication-resolver-1  Removing
+Stderr: Container roottests3zerocopyreplication-node1-1  Stopped
+Stderr: Container roottests3zerocopyreplication-node1-1  Removing
+Stderr: Container roottests3zerocopyreplication-resolver-1  Removed
+Stderr: Container roottests3zerocopyreplication-node2-1  Removed
+Stderr: Container roottests3zerocopyreplication-node1-1  Removed
+Stderr: Container roottests3zerocopyreplication-zoo2-1  Stopping
+Stderr: Container roottests3zerocopyreplication-minio1-1  Stopping
+Stderr: Container roottests3zerocopyreplication-zoo1-1  Stopping
+Stderr: Container roottests3zerocopyreplication-zoo3-1  Stopping
+Stderr: Container roottests3zerocopyreplication-zoo2-1  Stopped
+Stderr: Container roottests3zerocopyreplication-zoo2-1  Removing
+Stderr: Container roottests3zerocopyreplication-minio1-1  Stopped
+Stderr: Container roottests3zerocopyreplication-minio1-1  Removing
+Stderr: Container roottests3zerocopyreplication-zoo1-1  Stopped
+Stderr: Container roottests3zerocopyreplication-zoo1-1  Removing
+Stderr: Container roottests3zerocopyreplication-zoo3-1  Stopped
+Stderr: Container roottests3zerocopyreplication-zoo3-1  Removing
+Stderr: Container roottests3zerocopyreplication-minio1-1  Removed
+Stderr: Container roottests3zerocopyreplication-proxy2-1  Stopping
+Stderr: Container roottests3zerocopyreplication-proxy1-1  Stopping
+Stderr: Container roottests3zerocopyreplication-proxy2-1  Stopped
+Stderr: Container roottests3zerocopyreplication-proxy2-1  Removing
+Stderr: Container roottests3zerocopyreplication-proxy1-1  Stopped
+Stderr: Container roottests3zerocopyreplication-proxy1-1  Removing
+Stderr: Container roottests3zerocopyreplication-zoo1-1  Removed
+Stderr: Container roottests3zerocopyreplication-zoo2-1  Removed
+Stderr: Container roottests3zerocopyreplication-zoo3-1  Removed
+Stderr: Container roottests3zerocopyreplication-proxy2-1  Removed
+Stderr: Container roottests3zerocopyreplication-proxy1-1  Removed
+Stderr: Volume roottests3zerocopyreplication_data1-1  Removing
+Stderr: Network roottests3zerocopyreplication_default  Removing
+Stderr: Volume roottests3zerocopyreplication_data1-1  Removed
+Stderr: Network roottests3zerocopyreplication_default  Removed
+Cleanup called
+Docker networks for project roottests3zerocopyreplication are NETWORK ID   NAME      DRIVER    SCOPE
+
+Docker containers for project roottests3zerocopyreplication are CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS    PORTS     NAMES
+
+Docker volumes for project roottests3zerocopyreplication are DRIVER    VOLUME NAME
+
+Command:[docker container list --all --filter name='^/roottests3zerocopyreplication-.*-1$' --format '{{.ID}}:{{.Names}}']
+Unstopped containers: {}
+No running containers for project: roottests3zerocopyreplication
+Trying to prune unused networks...
+Trying to prune unused images...
+Command:[docker image prune -f]
+Stdout:Total reclaimed space: 0B
+Images pruned
+Trying to prune unused volumes...
+Command:[docker volume ls | wc -l]
+Stdout:1
+Volumes pruned: 1
+
+---------------------------- Captured log teardown -----------------------------
+2024-11-22 09:24:46 [ 584 ] DEBUG : Command:[docker compose --env-file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/.env --project-name roottests3zerocopyreplication --file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node1/docker-compose.yml --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_keeper.yml --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_minio.yml --file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node2/docker-compose.yml stop --timeout 20] (cluster.py:117, run_and_check)
+2024-11-22 09:25:07 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-node1-1  Stopping (cluster.py:143, run_and_check)
+2024-11-22 09:25:07 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-node2-1  Stopping (cluster.py:143, run_and_check)
+2024-11-22 09:25:07 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-resolver-1  Stopping (cluster.py:143, run_and_check)
+2024-11-22 09:25:07 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-node2-1  Stopped (cluster.py:143, run_and_check)
+2024-11-22 09:25:07 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-node1-1  Stopped (cluster.py:143, run_and_check)
+2024-11-22 09:25:07 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo1-1  Stopping (cluster.py:143, run_and_check)
+2024-11-22 09:25:07 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo2-1  Stopping (cluster.py:143, run_and_check)
+2024-11-22 09:25:07 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo3-1  Stopping (cluster.py:143, run_and_check)
+2024-11-22 09:25:07 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-minio1-1  Stopping (cluster.py:143, run_and_check)
+2024-11-22 09:25:07 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-minio1-1  Stopped (cluster.py:143, run_and_check)
+2024-11-22 09:25:07 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo3-1  Stopped (cluster.py:143, run_and_check)
+2024-11-22 09:25:07 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo1-1  Stopped (cluster.py:143, run_and_check)
+2024-11-22 09:25:07 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo2-1  Stopped (cluster.py:143, run_and_check)
+2024-11-22 09:25:07 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-resolver-1  Stopped (cluster.py:143, run_and_check)
+2024-11-22 09:25:07 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-proxy2-1  Stopping (cluster.py:143, run_and_check)
+2024-11-22 09:25:07 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-proxy1-1  Stopping (cluster.py:143, run_and_check)
+2024-11-22 09:25:07 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-proxy1-1  Stopped (cluster.py:143, run_and_check)
+2024-11-22 09:25:07 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-proxy2-1  Stopped (cluster.py:143, run_and_check)
+2024-11-22 09:25:07 [ 584 ] DEBUG : Command:[bash -c [ -f /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node1/logs/stderr.log ] && zgrep -aH "==================" /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node1/logs/stderr.log* | ( [ -z "" ] && cat || grep -v "$" ) || true] (cluster.py:117, run_and_check)
+2024-11-22 09:25:07 [ 584 ] DEBUG : Command:[bash -c [ -f /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node2/logs/stderr.log ] && zgrep -aH "==================" /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node2/logs/stderr.log* | ( [ -z "" ] && cat || grep -v "$" ) || true] (cluster.py:117, run_and_check)
+2024-11-22 09:25:07 [ 584 ] DEBUG : Command:[docker compose --env-file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/.env --project-name roottests3zerocopyreplication --file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node1/docker-compose.yml --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_keeper.yml --file /ClickHouse/tests/integration/helpers/../../../tests/integration/compose/docker_compose_minio.yml --file /ClickHouse/tests/integration/test_s3_zero_copy_replication/_instances/node2/docker-compose.yml down --volumes] (cluster.py:117, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-node2-1  Stopping (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-node1-1  Stopping (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-resolver-1  Stopping (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-node2-1  Stopped (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-node2-1  Removing (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-resolver-1  Stopped (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-resolver-1  Removing (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-node1-1  Stopped (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-node1-1  Removing (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-resolver-1  Removed (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-node2-1  Removed (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-node1-1  Removed (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo2-1  Stopping (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-minio1-1  Stopping (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo1-1  Stopping (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo3-1  Stopping (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo2-1  Stopped (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo2-1  Removing (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-minio1-1  Stopped (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-minio1-1  Removing (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo1-1  Stopped (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo1-1  Removing (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo3-1  Stopped (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo3-1  Removing (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-minio1-1  Removed (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-proxy2-1  Stopping (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-proxy1-1  Stopping (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-proxy2-1  Stopped (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-proxy2-1  Removing (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-proxy1-1  Stopped (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-proxy1-1  Removing (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo1-1  Removed (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo2-1  Removed (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-zoo3-1  Removed (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-proxy2-1  Removed (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Container roottests3zerocopyreplication-proxy1-1  Removed (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Volume roottests3zerocopyreplication_data1-1  Removing (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Network roottests3zerocopyreplication_default  Removing (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Volume roottests3zerocopyreplication_data1-1  Removed (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stderr: Network roottests3zerocopyreplication_default  Removed (cluster.py:143, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Cleanup called (cluster.py:889, cleanup)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Docker networks for project roottests3zerocopyreplication are NETWORK ID   NAME      DRIVER    SCOPE
+ (cluster.py:868, print_all_docker_pieces)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Docker containers for project roottests3zerocopyreplication are CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS    PORTS     NAMES
+ (cluster.py:876, print_all_docker_pieces)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Docker volumes for project roottests3zerocopyreplication are DRIVER    VOLUME NAME
+ (cluster.py:884, print_all_docker_pieces)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Command:[docker container list --all --filter name='^/roottests3zerocopyreplication-.*-1$' --format '{{.ID}}:{{.Names}}'] (cluster.py:117, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Unstopped containers: {} (cluster.py:903, cleanup)
+2024-11-22 09:25:08 [ 584 ] DEBUG : No running containers for project: roottests3zerocopyreplication (cluster.py:917, cleanup)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Trying to prune unused networks... (cluster.py:923, cleanup)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Trying to prune unused images... (cluster.py:939, cleanup)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Command:[docker image prune -f] (cluster.py:117, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stdout:Total reclaimed space: 0B (cluster.py:141, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Images pruned (cluster.py:942, cleanup)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Trying to prune unused volumes... (cluster.py:948, cleanup)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Command:[docker volume ls | wc -l] (cluster.py:117, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Stdout:1 (cluster.py:141, run_and_check)
+2024-11-22 09:25:08 [ 584 ] DEBUG : Volumes pruned: 1
+ (cluster.py:953, cleanup)
+=========================== short test summary info ============================
+FAILED test_s3_zero_copy_replication/test.py::test_encoding - TypeError: writ...
+====================== 1 failed, 16 deselected in 33.19s =======================
+Running pytest container as: 'docker run --net=host  --rm --name clickhouse_integration_tests_05o38c --privileged --dns-search='.' --volume=/home/alexfvk/projects/clickhouse/build_local/programs/clickhouse-odbc-bridge:/clickhouse-odbc-bridge --volume=/home/alexfvk/projects/clickhouse/build_local/programs/clickhouse:/clickhouse --volume=/home/alexfvk/projects/clickhouse/build_local/programs/clickhouse-library-bridge:/clickhouse-library-bridge --volume=/home/alexfvk/projects/clickhouse/programs/server:/clickhouse-config --volume=/home/alexfvk/projects/clickhouse/tests/integration:/ClickHouse/tests/integration --volume=/home/alexfvk/projects/clickhouse/utils/backupview:/ClickHouse/utils/backupview --volume=/home/alexfvk/projects/clickhouse/utils/grpc-client/pb2:/ClickHouse/utils/grpc-client/pb2 --volume=/run:/run/host:ro --volume=clickhouse_integration_tests_volume:/var/lib/docker   -e DOCKER_CLIENT_TIMEOUT=300 -e COMPOSE_HTTP_TIMEOUT=600  -e PYTHONUNBUFFERED=1 -e PYTEST_ADDOPTS="  test_s3_zero_copy_replication -k test_encoding   -vvv" clickhouse/integration-tests-runner:latest '.

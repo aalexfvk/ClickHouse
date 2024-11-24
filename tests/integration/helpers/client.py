@@ -171,8 +171,8 @@ class QueryRuntimeException(Exception):
 class CommandRequest:
     def __init__(self, command, stdin=None, timeout=None, ignore_error=False):
         # Write data to tmp file to avoid PIPEs and execution blocking
-        stdin_file = tempfile.TemporaryFile(mode="w+")
-        stdin_file.write(stdin)
+        stdin_file = tempfile.TemporaryFile(mode="wb+")
+        stdin_file.write(stdin.encode("utf-8") if isinstance(stdin, str) else stdin)
         stdin_file.seek(0)
         self.stdout_file = tempfile.TemporaryFile()
         self.stderr_file = tempfile.TemporaryFile()

@@ -347,6 +347,7 @@ MergedBlockOutputStream::WrittenFiles MergedBlockOutputStream::finalizePartOnDis
         written_files.emplace_back(std::move(out));
     }
 
+    LOG_TRACE(getLogger(__PRETTY_FUNCTION__), "Hello: new_part->getSerializationInfos() size {}", new_part->getSerializationInfos().size());
     if (!new_part->getSerializationInfos().empty())
     {
         auto out = new_part->getDataPartStorage().writeFile(IMergeTreeDataPart::SERIALIZATION_FILE_NAME, 4096, write_settings);

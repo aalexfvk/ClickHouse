@@ -23,6 +23,7 @@ def started_cluster():
             macros={"replica": "1"},
             with_minio=True,
             with_zookeeper=True,
+            stay_alive=True,
         )
         cluster.add_instance(
             "node2",
@@ -30,6 +31,7 @@ def started_cluster():
             macros={"replica": "2"},
             with_minio=True,
             with_zookeeper=True,
+            stay_alive=True,
         )
         logging.info("Starting cluster...")
         cluster.start()
@@ -798,3 +800,71 @@ def test_move_shared_lock_fail_keeper_unavailable(started_cluster, test_table):
 
     node1.query(f"DROP TABLE IF EXISTS {test_table} SYNC")
     node2.query(f"DROP TABLE IF EXISTS {test_table} SYNC")
+
+
+def test_encoding(started_cluster, test_table):
+    node1 = cluster.instances["node1"]
+    node2 = cluster.instances["node2"]
+
+    node1.query(f"DROP TABLE IF EXISTS `{test_table}` SYNC")
+
+    # node1.query(
+    #     f"""
+    #     CREATE TABLE {test_table} UUID '899aeb47-369c-4685-835f-aa93db311138' ON CLUSTER test_cluster (`привет` UInt64, date DateTime)
+    #     ENGINE=ReplicatedMergeTree('/clickhouse/tables/{test_table}', '{{replica}}')
+    #     ORDER BY date PARTITION BY toDate(date)
+    #     SETTINGS storage_policy='hybrid'
+    #     """.encode("cp1251")
+    # )
+
+    # node1.query(
+    #     f"""
+    #     CREATE TABLE {test_table} UUID '899aeb47-369c-4685-835f-aa93db311138' ON CLUSTER test_cluster (`привет` Int32)
+    #     ENGINE=MergeTree()
+    #     ORDER BY `привет` PARTITION BY `привет` % 2
+    #     SETTINGS ratio_of_defaults_for_sparse_serialization = 0.0
+    #     """.encode("cp1251")
+    # )
+
+    node1.query(
+        f"""
+        CREATE TABLE `{test_table}` UUID '899aeb47-369c-4685-835f-aa93db311138' ON CLUSTER test_cluster
+        (
+          `привет` Int32,
+          date DateTime
+        ) ENGINE=MergeTree()
+        ORDER BY date PARTITION BY toDate(date)
+        SETTINGS ratio_of_defaults_for_sparse_serialization = 0.0
+        """.encode("cp1251")
+    )
+
+    node1.query(f"INSERT INTO `{test_table}` VALUES (100, '2024-11-22 10:00:00')".encode("cp1251"))
+    # node1.query(f"INSERT INTO {test_table} VALUES (100)")
+
+    # assert node1.query(f"SELECT * FROM {test_table}") == '100\n'
+    assert node1.query(f"SELECT `привет` FROM `{test_table}`".encode("cp1251")) == '100\n'
+    assert node1.query(f"SELECT * FROM `{test_table}`".encode("cp1251")) == '100\t2024-11-22 10:00:00\n'
+
+    node1.query(f"ALTER TABLE {test_table} DETACH PARTITION '2024-11-22'")
+    node1.query(f"ALTER TABLE {test_table} ATTACH PARTITION '2024-11-22'")
+
+    result = node1.exec_in_container(
+        [
+            "bash",
+            "-c",
+            "cat /var/lib/clickhouse/store/899/899aeb47-369c-4685-835f-aa93db311138/20241122_1_1_0/serialization.json"
+        ]
+    )
+
+    # node1.restart_clickhouse()
+    # result = node1.exec_in_container(
+    #     [
+    #         "bash",
+    #         "-c",
+    #         "ls /var/lib/clickhouse/store/899/899aeb47-369c-4685-835f-aa93db311138/0_1_1_0"
+    #     ]
+    # )
+
+    # assert result == ""
+
+    node1.restart_clickhouse()

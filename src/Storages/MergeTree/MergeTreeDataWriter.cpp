@@ -623,6 +623,7 @@ MergeTreeDataWriter::TemporaryPart MergeTreeDataWriter::writeTempPartImpl(
     SerializationInfo::Settings settings{(*data_settings)[MergeTreeSetting::ratio_of_defaults_for_sparse_serialization], true};
     SerializationInfoByName infos(columns, settings);
     infos.add(block);
+    LOG_TRACE(getLogger(__PRETTY_FUNCTION__), "Hello: size {} columns: {}", infos.size(), columns.size());
 
     for (const auto & [column_name, _] : columns)
     {
