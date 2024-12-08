@@ -10083,19 +10083,31 @@ String StorageReplicatedMergeTree::getSharedDataReplica(
 }
 
 Strings StorageReplicatedMergeTree::getZeroCopyPartPath(
-    const MergeTreeSettings & settings, const std::string & disk_type, const String & table_uuid,
-    const String & part_name, const String & zookeeper_path_old)
+    const MergeTreeSettings & settings,
+    const std::string & disk_type,
+    const String & table_uuid,
+    const String & part_name,
+    const String & partition_id,
+    const String & part_unique_id,
+    const String & zookeeper_path_old)
 {
     Strings res;
+    auto zero_copy_root = fs::path(settings[MergeTreeSetting::remote_fs_zero_copy_zookeeper_path].toString());
+    String zero_copy_disk = fmt::format("zero_copy_{}", disk_type);
 
-    String zero_copy = fmt::format("zero_copy_{}", disk_type);
+    String path = zero_copy_root / zero_copy_disk / table_uuid / partition_id / part_unique_id;
+    res.push_back(std::move(path));
 
-    String new_path = fs::path(settings[MergeTreeSetting::remote_fs_zero_copy_zookeeper_path].toString()) / zero_copy / table_uuid / part_name;
-    res.push_back(std::move(new_path));
-    if (settings[MergeTreeSetting::remote_fs_zero_copy_path_compatible_mode] && !zookeeper_path_old.empty())
-    { /// Compatibility mode for cluster with old and new versions
-        String old_path = fs::path(zookeeper_path_old) / zero_copy / "shared" / part_name;
-        res.push_back(std::move(old_path));
+    /// Compatibility mode for cluster with old and new formats of zero-copy paths
+    if (settings[MergeTreeSetting::remote_fs_zero_copy_path_compatible_mode]) 
+    {
+        res.push_back(zero_copy_root / zero_copy_disk / table_uuid / part_name);
+
+        if (!zookeeper_path_old.empty())
+        {
+            String old_path = fs::path(zookeeper_path_old) / zero_copy_disk / "shared" / part_name;
+            res.push_back(std::move(old_path));
+        }
     }
 
     return res;
@@ -10207,10 +10219,13 @@ std::optional<ZeroCopyLock> StorageReplicatedMergeTree::tryCreateZeroCopyExclusi
     if (!zookeeper)
         return std::nullopt;
 
-    String zc_zookeeper_path = *getZeroCopyPartPath(part_name, disk);
+    String zero_copy_disk = fmt::format("zero_copy_{}", disk->getDataSourceDescription().toString());
+    auto zc_root_path = fs::path((*getSettings())[MergeTreeSetting::remote_fs_zero_copy_zookeeper_path].toString());
+
+    String zc_exclusive_lock_path = zc_root_path / zero_copy_disk / getTableSharedID() / part_name;
 
     /// Just recursively create ancestors for lock
-    zookeeper->createAncestors(zc_zookeeper_path + "/");
+    zookeeper->createAncestors(zc_exclusive_lock_root_path + "/");
 
     /// Create actual lock
     ZeroCopyLock lock(zookeeper, zc_zookeeper_path, replica_name);
