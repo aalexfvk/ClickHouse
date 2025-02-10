@@ -10296,19 +10296,28 @@ String StorageReplicatedMergeTree::getSharedDataReplica(
 }
 
 Strings StorageReplicatedMergeTree::getZeroCopyPartPath(
-    const MergeTreeSettings & settings, const std::string & disk_type, const String & table_uuid,
-    const String & part_name, const String & zookeeper_path_old)
+    const MergeTreeSettings & settings,
+    const std::string & disk_type,
+    const String & table_uuid,
+    const String & part_name,
+    const String & zookeeper_path_old)
 {
     Strings res;
+    String zero_copy_disk_prefix = fmt::format("zero_copy_{}", disk_type);
 
-    String zero_copy = fmt::format("zero_copy_{}", disk_type);
-
-    String new_path = fs::path(settings[MergeTreeSetting::remote_fs_zero_copy_zookeeper_path].toString()) / zero_copy / table_uuid / part_name;
+    String new_path = fs::path(settings[MergeTreeSetting::remote_fs_zero_copy_zookeeper_path].toString()) / zero_copy_disk_prefix / table_uuid / part_name;
     res.push_back(std::move(new_path));
-    if (settings[MergeTreeSetting::remote_fs_zero_copy_path_compatible_mode] && !zookeeper_path_old.empty())
-    { /// Compatibility mode for cluster with old and new versions
-        String old_path = fs::path(zookeeper_path_old) / zero_copy / "shared" / part_name;
-        res.push_back(std::move(old_path));
+
+    if (settings[MergeTreeSetting::remote_fs_zero_copy_path_compatible_mode])
+    {
+        /// Compatibility mode for cluster with old and new versions
+        Strings extra_paths;
+        boost::split(extra_paths, settings[MergeTreeSetting::remote_fs_zero_copy_zookeeper_extra_paths], boost::is_any_of(","));
+        for (auto & extra_path : extra_paths)
+            res.push_back(fs::path(extra_path) / zero_copy_disk_prefix / table_uuid / part_name);
+
+        if (!zookeeper_path_old.empty())
+            res.push_back(fs::path(zookeeper_path_old) / zero_copy_disk_prefix / "shared" / part_name);
     }
 
     return res;

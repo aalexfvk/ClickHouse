@@ -261,6 +261,7 @@ namespace ErrorCodes
     DECLARE(UInt64, part_moves_between_shards_delay_seconds, 30, "Time to wait before/after moving parts between shards.", EXPERIMENTAL) \
     DECLARE(Bool, allow_remote_fs_zero_copy_replication, default_allow_remote_fs_zero_copy_replication, "Don't use this setting in production, because it is not ready.", BETA) \
     DECLARE(String, remote_fs_zero_copy_zookeeper_path, "/clickhouse/zero_copy", "ZooKeeper path for zero-copy table-independent info.", EXPERIMENTAL) \
+    DECLARE(String, remote_fs_zero_copy_zookeeper_extra_paths, "", "Comma separated extra ZooKeeper paths for zero-copy table-independent info in compatible mode.", EXPERIMENTAL) \
     DECLARE(Bool, remote_fs_zero_copy_path_compatible_mode, false, "Run zero-copy in compatible mode during conversion process.", EXPERIMENTAL) \
     DECLARE(Bool, force_read_through_cache_for_merges, false, "Force read-through filesystem cache for merges", EXPERIMENTAL) \
     DECLARE(Bool, cache_populated_by_fetch, false, "When using zero-copy replication or SharedMergeTree, eagerly read the file into cache for each added part. This approximates the behavior and performance of using ReplicatedMergeTree on direct-attached storage. When enabling this, please make sure to also enable cache_on_write_operations in disks config.", 0) \
