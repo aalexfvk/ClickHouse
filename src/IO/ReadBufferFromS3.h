@@ -82,9 +82,12 @@ private:
     /// If true, if we destroy impl now, no work was wasted. Just for metrics.
     bool atEndOfRequestedRangeGuess();
 
+    /// Helper class to control retrying.
+    class RetrySleeper;
+
     /// Call inside catch() block if GetObject fails. Bumps metrics, logs the error.
     /// Returns true if the error looks retriable.
-    bool processException(size_t read_offset, size_t attempt) const;
+    bool processException(size_t read_offset, RetrySleeper & default_sleeper, RetrySleeper * no_such_key_sleeper) const;
 
     Aws::S3::Model::GetObjectResult sendRequest(size_t attempt, size_t range_begin, std::optional<size_t> range_end_incl) const;
 

@@ -40,7 +40,11 @@ namespace ErrorCodes
     DECLARE(String, storage_class_name, "", "", 0) \
     DECLARE(UInt64, http_max_fields, 1000000, "", 0) \
     DECLARE(UInt64, http_max_field_name_size, 128 * 1024, "", 0) \
-    DECLARE(UInt64, http_max_field_value_size, 128 * 1024, "", 0)
+    DECLARE(UInt64, http_max_field_value_size, 128 * 1024, "", 0) \
+    DECLARE(Bool, retry_no_such_key, true, "", 0) \
+    DECLARE(UInt64, retry_no_such_key_max_attempts, 4, "", 0) \
+    DECLARE(UInt64, retry_no_such_key_initial_backoff_ms, 500, "", 0) \
+    DECLARE(UInt64, retry_no_such_key_max_backoff_ms, 4000, "", 0)
 
 #define PART_UPLOAD_SETTINGS(DECLARE, ALIAS) \
     DECLARE(UInt64, strict_upload_part_size, 0, "", 0) \

@@ -266,6 +266,11 @@ void S3ObjectStorage::listObjects(const std::string & path, RelativePathsWithMet
             break;
 
         for (const auto & object : objects)
+        {
+            auto diff = Poco::Timestamp() - Poco::Timestamp::fromEpochTime(object.GetLastModified().Seconds());
+            if (diff < 60*1000*1000)
+                continue;
+
             children.emplace_back(std::make_shared<RelativePathWithMetadata>(
                 object.GetKey(),
                 ObjectMetadata{
@@ -273,6 +278,8 @@ void S3ObjectStorage::listObjects(const std::string & path, RelativePathsWithMet
                     Poco::Timestamp::fromEpochTime(object.GetLastModified().Seconds()),
                     object.GetETag(),
                     {}}));
+        }
+        
 
         if (max_keys)
         {

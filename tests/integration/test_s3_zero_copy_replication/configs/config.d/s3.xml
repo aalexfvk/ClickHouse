@@ -8,6 +8,8 @@
                 <access_key_id>minio</access_key_id>
                 <secret_access_key>minio123</secret_access_key>
                 <send_metadata>false</send_metadata>
+                <retry_no_such_key_max_attempts>3</retry_no_such_key_max_attempts>
+                <retry_no_such_key_initial_backoff_ms>250</retry_no_such_key_initial_backoff_ms>
             </s31>
             <s31_again>
                 <type>s3</type>
@@ -15,6 +17,7 @@
                 <access_key_id>minio</access_key_id>
                 <secret_access_key>minio123</secret_access_key>
                 <send_metadata>false</send_metadata>
+                <retry_no_such_key_max_attempts>3</retry_no_such_key_max_attempts>
             </s31_again>
             <s32>
                 <type>s3</type>
@@ -22,6 +25,7 @@
                 <access_key_id>minio</access_key_id>
                 <secret_access_key>minio123</secret_access_key>
                 <send_metadata>false</send_metadata>
+                <retry_no_such_key_max_attempts>3</retry_no_such_key_max_attempts>
             </s32>
         </disks>
         <policies>
