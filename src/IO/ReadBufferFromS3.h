@@ -20,6 +20,7 @@ namespace DB
 /**
  * Perform S3 HTTP GET request and provide response to read.
  */
+
 class ReadBufferFromS3 : public ReadBufferFromFileBase
 {
 private:
@@ -87,7 +88,7 @@ private:
 
     /// Call inside catch() block if GetObject fails. Bumps metrics, logs the error.
     /// Returns true if the error looks retriable.
-    bool processException(size_t read_offset, RetrySleeper & default_sleeper, RetrySleeper * no_such_key_sleeper) const;
+    bool processException(size_t read_offset, size_t attempt, size_t max_attempts) const;
 
     Aws::S3::Model::GetObjectResult sendRequest(size_t attempt, size_t range_begin, std::optional<size_t> range_end_incl) const;
 

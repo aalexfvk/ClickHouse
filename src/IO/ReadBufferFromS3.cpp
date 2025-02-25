@@ -51,26 +51,40 @@ namespace ErrorCodes
     extern const int CANNOT_ALLOCATE_MEMORY;
 }
 
+class IRetryPolicy
+{
+public:
+    virtual bool shouldRetryAfterSleep() = 0;
+    virtual ~IRetryPolicy() = default;
+};
+
 /**
  * Helper class to control retrying.
  */
-class ReadBufferFromS3::RetrySleeper
+class RetryPolicyBase: public IRetryPolicy
 {
 public:
-    RetrySleeper(size_t max_attempts_, size_t initial_backoff_ms_, size_t max_backoff_ms_)
+    RetryPolicyBase(size_t max_attempts_, size_t initial_backoff_ms_, size_t max_backoff_ms_, bool auto_reset_ = false)
         : initial_backoff_ms(initial_backoff_ms_)
         , max_backoff_ms(max_backoff_ms_ == 0 ? std::numeric_limits<size_t>::max() : max_backoff_ms_)
         , max_attempts(max_attempts_)
         , next_sleep_for_ms(initial_backoff_ms_)
         , attempt(1)
+        , auto_reset(auto_reset_)
     {
     }
 
-    void sleepNext()
+    bool shouldRetryAfterSleep() override
     {
-        sleepForMilliseconds(next_sleep_for_ms);
-        next_sleep_for_ms = std::min(max_backoff_ms, next_sleep_for_ms * 2);
-        attempt++;
+        if (isLimitReached() || !shouldRetryImpl())
+        {
+            if (auto_reset)
+                reset();
+            return false;
+        }
+
+        sleepNext();
+        return true;
     }
 
     bool isLimitReached() const { return attempt >= max_attempts; }
@@ -81,17 +95,179 @@ public:
         attempt = 1;
     }
 
-    UInt64 currentAttempt() const { return attempt; }
-
-    UInt64 maxAttempts() const { return max_attempts; }
+    size_t maxAttempts() const { return max_attempts; }
+    size_t currentAttempt() const { return attempt; }
 
 private:
-    size_t initial_backoff_ms;
-    size_t max_backoff_ms;
-    size_t max_attempts;
+
+    void sleepNext()
+    {
+        sleepForMilliseconds(next_sleep_for_ms);
+        next_sleep_for_ms = std::min(max_backoff_ms, next_sleep_for_ms * 2);
+        attempt++;
+    }    
+
+    virtual bool shouldRetryImpl() = 0;
+
+    const size_t initial_backoff_ms;
+    const size_t max_backoff_ms;
+    const size_t max_attempts;
     size_t next_sleep_for_ms;
     size_t attempt;
+    const bool auto_reset;
 };
+
+class ChainedRetryPolicy: public IRetryPolicy
+{
+public:
+
+    ChainedRetryPolicy(std::vector<std::shared_ptr<IRetryPolicy>> && policies_)
+    : policies(std::move(policies_))
+    {        
+    }
+
+    void attach(const std::shared_ptr<IRetryPolicy> & retry_policy)
+    {
+        policies.push_back(retry_policy);
+    }
+
+    bool shouldRetryAfterSleep() override
+    {
+        for (const auto & policy: policies)
+        {
+            if (policy->shouldRetryAfterSleep())
+                return true;
+        }
+        return false;
+    }
+
+private:
+    std::vector<std::shared_ptr<IRetryPolicy>> policies;
+};
+
+// class DefaultRetryPolicy: public RetryPolicyBase
+// {
+// public:
+//     DefaultRetryPolicy(const ReadBufferFromS3 & buffer_)
+//         : RetryPolicyBase(
+//               request_settings[S3RequestSetting::max_single_read_retries], sleep_time_with_backoff_milliseconds, 0, /* auto_reset = */ true)
+//         , buffer(buffer_)
+//     {
+//     }
+
+// private:
+//     bool shouldRetryImpl() override
+//     {
+//         ProfileEvents::increment(ProfileEvents::ReadBufferFromS3RequestsErrors, 1);
+
+//         LOG_DEBUG(
+//             log,
+//             "Caught exception while reading S3 object. Bucket: {}, Key: {}, Version: {}, Offset: {}, "
+//             "Attempt: {}/{}, Message: {}",
+//             buffer.bucket, buffer.key, buffer.version_id.empty() ? "Latest" : buffer.version_id, buffer.read_offset,
+//             currentAttempt(), maxAttempts(), getCurrentExceptionMessage(/* with_stacktrace = */ false));
+
+//         if (auto * s3_exception = exception_cast<S3Exception *>(std::current_exception()))
+//         {
+//             /// It doesn't make sense to retry Access Denied or No Such Key
+//             if (!s3_exception->isRetryableError())
+//             {
+//                 s3_exception->addMessage("while reading key: {}, from bucket: {}", buffer.key, buffer.bucket);
+//                 return false;
+//                 // if (s3_exception->getS3ErrorCode() == Aws::S3::S3Errors::NO_SUCH_KEY && no_such_key_sleeper)
+//             }
+//         }
+
+//         /// It doesn't make sense to retry allocator errors
+//         if (getCurrentExceptionCode() == ErrorCodes::CANNOT_ALLOCATE_MEMORY)
+//         {
+//             tryLogCurrentException(log);
+//             return false;
+//         }
+
+//         return true;
+//     }
+
+//     const ReadBufferFromS3 & buffer;
+// };
+
+class CallableRetryPolicy : public RetryPolicyBase
+{
+public:
+    using RetryCallback = std::function<bool(const RetryPolicyBase &)>;
+
+    explicit CallableRetryPolicy(
+        size_t max_attempts_, size_t initial_backoff_ms_, size_t max_backoff_ms_, bool auto_reset_, RetryCallback retry_callback_)
+        : RetryPolicyBase(max_attempts_, initial_backoff_ms_, max_backoff_ms_, auto_reset_)
+        , retry_callback{std::move(retry_callback_)}
+    {
+    }
+
+private:
+    bool shouldRetryImpl() override { return retry_callback(*this); }
+
+    RetryCallback retry_callback;
+};
+
+class NoSuchKeyRetryPolicy : public RetryPolicyBase
+{
+public:
+    using RetryPolicyBase::RetryPolicyBase;
+
+private:
+    bool shouldRetryImpl() override
+    {
+        if (auto * s3_exception = exception_cast<S3Exception *>(std::current_exception()))
+        {
+            if (s3_exception->getS3ErrorCode() == Aws::S3::S3Errors::NO_SUCH_KEY)
+                return true;
+        }
+
+        return false;
+    }
+};
+
+// /**
+//  * Helper class to control retrying.
+//  */
+// class ReadBufferFromS3::RetrySleeper
+// {
+// public:
+//     RetrySleeper(size_t max_attempts_, size_t initial_backoff_ms_, size_t max_backoff_ms_)
+//         : initial_backoff_ms(initial_backoff_ms_)
+//         , max_backoff_ms(max_backoff_ms_ == 0 ? std::numeric_limits<size_t>::max() : max_backoff_ms_)
+//         , max_attempts(max_attempts_)
+//         , next_sleep_for_ms(initial_backoff_ms_)
+//         , attempt(1)
+//     {
+//     }
+
+//     void sleepNext()
+//     {
+//         sleepForMilliseconds(next_sleep_for_ms);
+//         next_sleep_for_ms = std::min(max_backoff_ms, next_sleep_for_ms * 2);
+//         attempt++;
+//     }
+
+//     bool isLimitReached() const { return attempt >= max_attempts; }
+
+//     void reset()
+//     {
+//         next_sleep_for_ms = initial_backoff_ms;
+//         attempt = 1;
+//     }
+
+//     UInt64 currentAttempt() const { return attempt; }
+
+//     UInt64 maxAttempts() const { return max_attempts; }
+
+// private:
+//     size_t initial_backoff_ms;
+//     size_t max_backoff_ms;
+//     size_t max_attempts;
+//     size_t next_sleep_for_ms;
+//     size_t attempt;
+// };
 
 
 ReadBufferFromS3::ReadBufferFromS3(
@@ -163,14 +339,20 @@ bool ReadBufferFromS3::nextImpl()
     bool next_result = false;
     size_t sleep_time_with_backoff_milliseconds = 100;
 
-    RetrySleeper default_sleeper{request_settings[S3RequestSetting::max_single_read_retries], sleep_time_with_backoff_milliseconds, 0};
+    auto default_retry_policy = std::make_shared<CallableRetryPolicy>(
+        request_settings[S3RequestSetting::max_single_read_retries],
+        sleep_time_with_backoff_milliseconds,
+        /* max_backoff_ms = */ 0,
+        /* auto_reset = */ true,
+        [this](auto & retry_policy) { return processException(getPosition(), retry_policy.currentAttempt(), retry_policy.maxAttempts()); });
 
-    std::optional<RetrySleeper> no_such_key_sleeper{};
+    ChainedRetryPolicy retry_policy({default_retry_policy});
+
     if (request_settings[S3RequestSetting::retry_no_such_key])
-        no_such_key_sleeper.emplace(
+        retry_policy.attach(std::make_shared<NoSuchKeyRetryPolicy>(
             request_settings[S3RequestSetting::retry_no_such_key_max_attempts],
             request_settings[S3RequestSetting::retry_no_such_key_initial_backoff_ms],
-            request_settings[S3RequestSetting::retry_no_such_key_max_backoff_ms]);
+            request_settings[S3RequestSetting::retry_no_such_key_max_backoff_ms]));
 
     for (size_t attempt = 1; !next_result; ++attempt)
     {
@@ -201,7 +383,7 @@ bool ReadBufferFromS3::nextImpl()
         }
         catch (...)
         {
-            if (!processException(getPosition(), default_sleeper, no_such_key_sleeper ? &*no_such_key_sleeper : nullptr))
+            if (!retry_policy.shouldRetryAfterSleep())
                 throw;
 
             /// Try to reinitialize `impl`.
@@ -240,14 +422,21 @@ size_t ReadBufferFromS3::readBigAt(char * to, size_t n, size_t range_begin, cons
     size_t initial_n = n;
     size_t sleep_time_with_backoff_milliseconds = 100;
 
-    RetrySleeper default_sleeper{request_settings[S3RequestSetting::max_single_read_retries], sleep_time_with_backoff_milliseconds, 1000};
+    auto default_retry_policy = std::make_shared<CallableRetryPolicy>(
+        request_settings[S3RequestSetting::max_single_read_retries],
+        sleep_time_with_backoff_milliseconds,
+        /* max_backoff_ms = */ 0,
+        /* auto_reset = */ true,
+        [this, &range_begin](auto & retry_policy)
+        { return processException(range_begin, retry_policy.currentAttempt(), retry_policy.maxAttempts()); });
 
-    std::optional<RetrySleeper> no_such_key_sleeper{};
+    ChainedRetryPolicy retry_policy({default_retry_policy});
+
     if (request_settings[S3RequestSetting::retry_no_such_key])
-        no_such_key_sleeper.emplace(
+        retry_policy.attach(std::make_shared<NoSuchKeyRetryPolicy>(
             request_settings[S3RequestSetting::retry_no_such_key_max_attempts],
             request_settings[S3RequestSetting::retry_no_such_key_initial_backoff_ms],
-            request_settings[S3RequestSetting::retry_no_such_key_max_backoff_ms]);
+            request_settings[S3RequestSetting::retry_no_such_key_max_backoff_ms]));
 
     for (size_t attempt = 1; n > 0; ++attempt)
     {
@@ -279,8 +468,8 @@ size_t ReadBufferFromS3::readBigAt(char * to, size_t n, size_t range_begin, cons
         }
         catch(...)
         {
-            if (!processException(range_begin, default_sleeper, no_such_key_sleeper ? &*no_such_key_sleeper : nullptr))
-                throw;
+            if (!retry_policy.shouldRetryAfterSleep())
+                throw;            
         }
 
         range_begin += bytes_copied;
@@ -291,12 +480,16 @@ size_t ReadBufferFromS3::readBigAt(char * to, size_t n, size_t range_begin, cons
     return initial_n;
 }
 
-bool ReadBufferFromS3::processException(size_t read_offset, RetrySleeper & default_sleeper, RetrySleeper * no_such_key_sleeper) const
+bool ReadBufferFromS3::processException(size_t read_offset, size_t attempt, size_t max_attempts) const
 {
     ProfileEvents::increment(ProfileEvents::ReadBufferFromS3RequestsErrors, 1);
 
-    bool should_retry = true;
-    RetrySleeper * sleeper = &default_sleeper;
+    LOG_DEBUG(
+        log,
+        "Caught exception while reading S3 object. Bucket: {}, Key: {}, Version: {}, Offset: {}, "
+        "Attempt: {}/{}, Message: {}",
+        bucket, key, version_id.empty() ? "Latest" : version_id, read_offset,
+        attempt, max_attempts, getCurrentExceptionMessage(/* with_stacktrace = */ false));
 
     if (auto * s3_exception = exception_cast<S3Exception *>(std::current_exception()))
     {
@@ -304,37 +497,18 @@ bool ReadBufferFromS3::processException(size_t read_offset, RetrySleeper & defau
         if (!s3_exception->isRetryableError())
         {
             s3_exception->addMessage("while reading key: {}, from bucket: {}", key, bucket);
-
-            if (s3_exception->getS3ErrorCode() == Aws::S3::S3Errors::NO_SUCH_KEY && no_such_key_sleeper)
-            {
-                sleeper = no_such_key_sleeper;
-                default_sleeper.reset();
-            }
-            else
-                should_retry = false;
+            return false;
         }
-    }    
-
-    LOG_DEBUG(
-        log,
-        "Caught exception while reading S3 object. Bucket: {}, Key: {}, Version: {}, Offset: {}, "
-        "Attempt: {}/{}, Message: {}",
-        bucket, key, version_id.empty() ? "Latest" : version_id, read_offset, sleeper->currentAttempt(), sleeper->maxAttempts(),
-        getCurrentExceptionMessage(/* with_stacktrace = */ false));
+    }
 
     /// It doesn't make sense to retry allocator errors
     if (getCurrentExceptionCode() == ErrorCodes::CANNOT_ALLOCATE_MEMORY)
     {
         tryLogCurrentException(log);
-        should_retry = false;
+        return false;
     }
 
-    should_retry = should_retry && !sleeper->isLimitReached();
-
-    if (should_retry)
-        sleeper->sleepNext();
-
-    return should_retry;
+    return true;
 }
 
 
@@ -519,7 +693,7 @@ Aws::S3::Model::GetObjectResult ReadBufferFromS3::sendRequest(size_t attempt, si
         auto diff = Poco::Timestamp() - Poco::Timestamp::fromEpochTime(outcome.GetResult().GetLastModified().Seconds());
         if (cc > 0 && diff < 2000*1000)        
         {
-            if ((cc % 3 == 2)
+            if (cc % 3 == 2)
             {
                 throw S3Exception(
                     Aws::S3::S3Errors::NO_SUCH_KEY,
