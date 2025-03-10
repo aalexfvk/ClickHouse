@@ -153,8 +153,15 @@ public:
     /// which is limited and rundomly spread
     class RetryStrategy : public Aws::Client::RetryStrategy
     {
+        static constexpr uint32_t DEFAULT_MAX_RETRIES = 10;
+        static constexpr uint32_t DEFAULT_SCALE_FACTOR = 25;
+        static constexpr uint32_t DEFAULT_MAX_DELAY_MS = 5000;
+
     public:
-        explicit RetryStrategy(uint32_t maxRetries_ = 10, uint32_t scaleFactor_ = 25, uint32_t maxDelayMs_ = 5000);
+        explicit RetryStrategy(
+            uint32_t maxRetries_ = DEFAULT_MAX_RETRIES,
+            uint32_t scaleFactor_ = DEFAULT_SCALE_FACTOR,
+            uint32_t maxDelayMs_ = DEFAULT_MAX_DELAY_MS);
 
         /// NOLINTNEXTLINE(google-runtime-int)
         bool ShouldRetry(const Aws::Client::AWSError<Aws::Client::CoreErrors>& error, long attemptedRetries) const override;
@@ -164,6 +171,20 @@ public:
 
         /// NOLINTNEXTLINE(google-runtime-int)
         long GetMaxAttempts() const override;
+
+        /// NOLINTNEXTLINE(google-runtime-int)
+        void RequestBookkeeping(const Aws::Client::HttpResponseOutcome & httpResponseOutcome) override;
+
+        /// NOLINTNEXTLINE(google-runtime-int)
+        void RequestBookkeeping(
+            const Aws::Client::HttpResponseOutcome & httpResponseOutcome,
+            const Aws::Client::AWSError<Aws::Client::CoreErrors> & lastError) override;
+
+        void SetStrategyPerError(
+            Aws::Client::CoreErrors error,
+            uint32_t maxRetries_ = DEFAULT_MAX_RETRIES,
+            uint32_t scaleFactor_ = DEFAULT_SCALE_FACTOR,
+            uint32_t maxDelayMs_ = DEFAULT_MAX_DELAY_MS);
 
         /// Sometimes [1] GCS may suggest to use Rewrite over CopyObject, i.e.:
         ///
@@ -176,9 +197,19 @@ public:
         static bool useGCSRewrite(const Aws::Client::AWSError<Aws::Client::CoreErrors>& error);
 
     private:
+        struct ExtraRetryStrategy
+        {
+            uint32_t max_retries = DEFAULT_MAX_RETRIES;
+            uint32_t scale_factor = DEFAULT_SCALE_FACTOR;
+            uint32_t max_delay_ms = DEFAULT_MAX_DELAY_MS;
+            uint32_t attempts = 0;
+        };
+
         uint32_t maxRetries;
         uint32_t scaleFactor;
         uint32_t maxDelayMs;
+
+        std::unordered_map<Aws::Client::CoreErrors, ExtraRetryStrategy> strategy_per_error;
     };
 
     /// SSE-KMS headers MUST be signed, so they need to be added before the SDK signs the message

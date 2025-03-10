@@ -538,6 +538,18 @@ Connection timeout for host from s3 disks.
     DECLARE(Bool, enable_s3_requests_logging, false, R"(
 Enable very explicit logging of S3 requests. Makes sense for debug only.
 )", 0) \
+    DECLARE(Bool, s3_retry_no_such_key, false, R"(
+Idleness timeout for sending and receiving data to/from S3. Fail if a single TCP read or write call blocks for this long.
+)", 0) \
+    DECLARE(UInt64, s3_no_such_key_max_retry_attempts, S3::DEFAULT_NO_SUCH_KEY_MAX_RETRY_ATTEMPTS, R"(
+Idleness timeout for sending and receiving data to/from S3. Fail if a single TCP read or write call blocks for this long.
+)", 0) \
+    DECLARE(UInt64, s3_no_such_key_initial_retry_backoff_ms, S3::DEFAULT_NO_SUCH_KEY_INITIAL_RETRY_BACKOFF_MS, R"(
+Idleness timeout for sending and receiving data to/from S3. Fail if a single TCP read or write call blocks for this long.
+)", 0) \
+    DECLARE(UInt64, s3_no_such_key_max_retry_backoff_ms, S3::DEFAULT_NO_SUCH_KEY_MAX_RETRY_BACKOFF_MS, R"(
+Idleness timeout for sending and receiving data to/from S3. Fail if a single TCP read or write call blocks for this long.
+)", 0) \
     DECLARE(String, s3queue_default_zookeeper_path, "/clickhouse/s3queue/", R"(
 Default zookeeper path prefix for S3Queue engine
 )", 0) \

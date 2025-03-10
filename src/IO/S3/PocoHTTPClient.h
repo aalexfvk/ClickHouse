@@ -62,6 +62,10 @@ struct PocoHTTPClientConfiguration : public Aws::Client::ClientConfiguration
     UInt64 http_max_field_name_size = 128 * 1024;
     UInt64 http_max_field_value_size = 128 * 1024;
 
+    size_t s3_no_such_key_max_retry_attempts = 0;
+    size_t s3_no_such_key_initial_retry_backoff_ms = 0;
+    size_t s3_no_such_key_max_retry_backoff_ms = 0;
+
     std::function<void(const ProxyConfiguration &)> error_report;
 
     void updateSchemeAndRegion();

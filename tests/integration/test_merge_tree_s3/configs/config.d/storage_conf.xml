@@ -7,6 +7,7 @@
                 <access_key_id>minio</access_key_id>
                 <secret_access_key>minio123</secret_access_key>
                 <s3_max_single_part_upload_size>33554432</s3_max_single_part_upload_size>
+                <s3_retry_no_such_key>1</s3_retry_no_such_key>
             </s3>
             <unstable_s3>
                 <type>s3</type>

@@ -175,6 +175,22 @@ def check_no_objects_after_drop(cluster, table_name="s3_test", node_name="node")
     return wait_for_delete_s3_objects(cluster, 0, timeout=0)
 
 
+def test_s3_absent_test(cluster):
+    node = cluster.instances["node"]
+    create_table(node, "s3_test", min_rows_for_wide_part=0)
+    minio = cluster.minio_client
+
+    values1 = generate_values("2020-01-03", 4096)
+    insert_query_id = uuid.uuid4().hex
+
+    node.query(
+        "INSERT INTO s3_test VALUES {}".format(values1), query_id=insert_query_id
+    )
+
+    remove_all_s3_objects(cluster)
+    assert node.query("SELECT * FROM s3_test order by dt, id FORMAT Values") == values1
+
+
 @pytest.mark.parametrize(
     "min_rows_for_wide_part,files_per_part,node_name",
     [

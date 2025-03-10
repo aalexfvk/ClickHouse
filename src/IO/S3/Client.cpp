@@ -54,6 +54,10 @@ namespace DB
 namespace Setting
 {
     extern const SettingsBool s3_use_adaptive_timeouts;
+    extern const SettingsBool s3_retry_no_such_key;
+    extern const SettingsUInt64 s3_no_such_key_max_retry_attempts;
+    extern const SettingsUInt64 s3_no_such_key_initial_retry_backoff_ms;
+    extern const SettingsUInt64 s3_no_such_key_max_retry_backoff_ms;
 }
 
 namespace ErrorCodes
@@ -76,10 +80,9 @@ Client::RetryStrategy::RetryStrategy(uint32_t maxRetries_, uint32_t scaleFactor_
 /// NOLINTNEXTLINE(google-runtime-int)
 bool Client::RetryStrategy::ShouldRetry(const Aws::Client::AWSError<Aws::Client::CoreErrors>& error, long attemptedRetries) const
 {
-    if (error.GetResponseCode() == Aws::Http::HttpResponseCode::MOVED_PERMANENTLY)
-        return false;
+    LOG_DEBUG(getLogger("S3Client::RetryStrategy"), "ShouldRetry {} {} {} {}", static_cast<UInt64>(error.GetErrorType()), error.GetResponseCode(), error.GetExceptionName(), error.GetMessage());
 
-    if (attemptedRetries >= maxRetries)
+    if (error.GetResponseCode() == Aws::Http::HttpResponseCode::MOVED_PERMANENTLY)
         return false;
 
     if (CurrentThread::isInitialized() && CurrentThread::get().isQueryCanceled())
@@ -87,6 +90,17 @@ bool Client::RetryStrategy::ShouldRetry(const Aws::Client::AWSError<Aws::Client:
 
     /// It does not make sense to retry when GCS suggest to use Rewrite
     if (useGCSRewrite(error))
+        return false;
+
+    if (auto it = strategy_per_error.find(error.GetErrorType()); it != strategy_per_error.end())
+    {
+        std::cout << "Found " << it->second.attempts << std::endl;
+        return it->second.attempts < it->second.max_retries;
+    }
+
+    std::cout << "Not found" << std::endl;
+
+    if (attemptedRetries >= maxRetries)
         return false;
 
     return error.ShouldRetry();
@@ -101,21 +115,62 @@ bool Client::RetryStrategy::useGCSRewrite(const Aws::Client::AWSError<Aws::Clien
 
 
 /// NOLINTNEXTLINE(google-runtime-int)
-long Client::RetryStrategy::CalculateDelayBeforeNextRetry(const Aws::Client::AWSError<Aws::Client::CoreErrors>&, long attemptedRetries) const
+long Client::RetryStrategy::CalculateDelayBeforeNextRetry(const Aws::Client::AWSError<Aws::Client::CoreErrors> & error, long attemptedRetries) const
 {
-    if (attemptedRetries == 0)
+    long attempts = attemptedRetries;
+    uint32_t scale_factor = scaleFactor;
+    uint32_t max_delay_ms = maxDelayMs;
+    
+    if (auto it = strategy_per_error.find(error.GetErrorType()); it != strategy_per_error.end())
+    {
+        attempts = it->second.attempts;
+        scale_factor = it->second.scale_factor;
+        max_delay_ms = it->second.max_delay_ms;
+    }
+
+    if (attempts == 0)
     {
         return 0;
     }
 
-    uint64_t backoffLimitedPow = 1ul << std::min(attemptedRetries, 31l);
-    return std::min<uint64_t>(scaleFactor * backoffLimitedPow, maxDelayMs);
+    uint64_t backoff_limited_pow = 1ul << std::min(attempts, 31l);
+    return std::min<uint64_t>(scale_factor * backoff_limited_pow, max_delay_ms);
 }
 
 /// NOLINTNEXTLINE(google-runtime-int)
 long Client::RetryStrategy::GetMaxAttempts() const
 {
     return maxRetries + 1;
+}
+
+
+void Client::RetryStrategy::RequestBookkeeping(const Aws::Client::HttpResponseOutcome & httpResponseOutcome)
+{
+    if (!httpResponseOutcome.IsSuccess())
+    {
+        if (auto it = strategy_per_error.find(httpResponseOutcome.GetError().GetErrorType()); it != strategy_per_error.end())
+        {
+            it->second.attempts++;
+        }
+    }
+}
+
+void Client::RetryStrategy::RequestBookkeeping(
+    const Aws::Client::HttpResponseOutcome & httpResponseOutcome, const Aws::Client::AWSError<Aws::Client::CoreErrors> &)
+{
+    if (!httpResponseOutcome.IsSuccess())
+    {
+        if (auto it = strategy_per_error.find(httpResponseOutcome.GetError().GetErrorType()); it != strategy_per_error.end())
+        {
+            it->second.attempts++;
+        }
+    }
+}
+
+void Client::RetryStrategy::SetStrategyPerError(
+    Aws::Client::CoreErrors error, uint32_t maxRetries_, uint32_t scaleFactor_, uint32_t maxDelayMs_)
+{
+    strategy_per_error.insert_or_assign(error, ExtraRetryStrategy{maxRetries_, scaleFactor_, maxDelayMs_});
 }
 
 namespace
@@ -970,7 +1025,17 @@ std::unique_ptr<S3::Client> ClientFactory::create( // NOLINT
             std::move(credentials),
             credentials_configuration);
 
-    client_configuration.retryStrategy = std::make_shared<Client::RetryStrategy>(client_configuration.s3_retry_attempts);
+    auto retry_strategy = std::make_shared<Client::RetryStrategy>(client_configuration.s3_retry_attempts);
+    if (client_configuration.s3_no_such_key_max_retry_attempts)
+    {
+        retry_strategy->SetStrategyPerError(
+            static_cast<Aws::Client::CoreErrors>(Aws::S3::S3Errors::NO_SUCH_KEY),
+            static_cast<uint32_t>(client_configuration.s3_no_such_key_max_retry_attempts),
+            static_cast<uint32_t>(client_configuration.s3_no_such_key_initial_retry_backoff_ms),
+            static_cast<uint32_t>(client_configuration.s3_no_such_key_max_retry_backoff_ms));
+    }
+
+    client_configuration.retryStrategy = retry_strategy;
 
     /// Use virtual addressing if endpoint is not specified.
     if (client_configuration.endpointOverride.empty())
@@ -997,8 +1062,9 @@ PocoHTTPClientConfiguration ClientFactory::createClientConfiguration( // NOLINT
     const ThrottlerPtr & put_request_throttler,
     const String & protocol)
 {
-    auto context = Context::getGlobalContextInstance();
+    auto context = Context::getGlobalContextInstance();    
     chassert(context);
+    const Settings & global_settings = context->getGlobalContext()->getSettingsRef();
     auto proxy_configuration_resolver = ProxyConfigurationResolverProvider::get(ProxyConfiguration::protocolFromString(protocol), context->getConfigRef());
 
     auto per_request_configuration = [=]{ return proxy_configuration_resolver->resolve(); };
@@ -1012,10 +1078,17 @@ PocoHTTPClientConfiguration ClientFactory::createClientConfiguration( // NOLINT
         s3_retry_attempts,
         enable_s3_requests_logging,
         for_disk_s3,
-        context->getGlobalContext()->getSettingsRef()[Setting::s3_use_adaptive_timeouts],
+        global_settings[Setting::s3_use_adaptive_timeouts],
         get_request_throttler,
         put_request_throttler,
         error_report);
+    
+    if (global_settings[Setting::s3_retry_no_such_key])
+    {
+        config.s3_no_such_key_max_retry_attempts = global_settings[Setting::s3_no_such_key_max_retry_attempts];
+        config.s3_no_such_key_initial_retry_backoff_ms = global_settings[Setting::s3_no_such_key_initial_retry_backoff_ms];
+        config.s3_no_such_key_max_retry_backoff_ms = global_settings[Setting::s3_no_such_key_max_retry_backoff_ms];
+    }
 
     config.scheme = Aws::Http::SchemeMapper::FromString(protocol.c_str());
 
