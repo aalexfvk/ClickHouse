@@ -23,6 +23,7 @@ def started_cluster():
             macros={"replica": "1"},
             with_minio=True,
             with_zookeeper=True,
+            stay_alive=True
         )
         cluster.add_instance(
             "node2",
@@ -30,6 +31,7 @@ def started_cluster():
             macros={"replica": "2"},
             with_minio=True,
             with_zookeeper=True,
+            stay_alive=True
         )
         logging.info("Starting cluster...")
         cluster.start()
@@ -117,6 +119,30 @@ def test_table(test_name):
     return "table_" + normalized
 
 
+
+def test_my_test(started_cluster):
+    node1 = cluster.instances["node1"]
+
+    print(node1.query(
+        """
+        SELECT
+            c1,
+            countIf(aeu IN (toUInt64(0), toUInt64(1))) AS events
+        FROM remote('127.0.0.{1,2}', view(
+            SELECT *
+            FROM VALUES('col1 Array(String), col2 Array(String)', (['k00', 'k10'], ['v00', 'v10']))
+        ))
+        ARRAY JOIN
+            col1 AS c1,
+            col2 AS c2,
+            arrayEnumerateUniq(col1) AS aeu
+        GROUP BY c1
+        SETTINGS enable_analyzer = 1
+        """
+        ))    
+
+
+
 # Result of `get_large_objects_count` can be changed in other tests, so run this case at the beginning
 @pytest.mark.order(0)
 @pytest.mark.parametrize("policy", ["s3"])
@@ -174,6 +200,239 @@ def test_s3_zero_copy_replication(started_cluster, policy):
 
     node1.query("DROP TABLE IF EXISTS s3_test SYNC")
     node2.query("DROP TABLE IF EXISTS s3_test SYNC")
+
+
+# TMP
+# def test_detach_attach_zero_copy_hardlink(started_cluster):
+#     policy = "s3"
+#     node1 = cluster.instances["node1"]
+#     node2 = cluster.instances["node2"]
+
+#     for node in ["node1", "node2"]:
+#         cluster.instances[node].query(
+#             """
+#             CREATE TABLE s3_test (id UInt32, value String)
+#             ENGINE=ReplicatedMergeTree('/clickhouse/tables/s3_test', '{}')
+#             ORDER BY id
+#             PARTITION BY id % 10
+#             SETTINGS storage_policy='{}', replicated_deduplication_window=1, min_replicated_logs_to_keep=3, max_replicated_logs_to_keep=5, cleanup_delay_period=0, cleanup_delay_period_random_add=0, cleanup_thread_preferred_points_per_iteration=0
+#             """.format(
+#                 "{replica}", policy
+#             )
+#         )
+
+#     node1.query("INSERT INTO s3_test VALUES (0,'data')")
+#     node2.query("SYSTEM SYNC REPLICA s3_test", timeout=30)
+
+#     # node1.query("SYSTEM STOP REPLICATION QUEUES s3_test")
+#     # node2.query("SYSTEM STOP REPLICATION QUEUES s3_test")
+
+#     node1.query("ALTER TABLE s3_test detach partition '0'")
+#     # node2.query("DETACH TABLE s3_test")
+
+#     #node1.query("SYSTEM STOP REPLICATION QUEUES s3_test")
+#     #node2.query("SYSTEM STOP REPLICATION QUEUES s3_test")
+
+#     def detaching_thread(node):
+#         start = time.time()
+
+#         while time.time() - start < 20:
+#             try:
+#                 node.query("ALTER TABLE s3_test detach partition '0'")
+#             except:
+#                 pass
+#             # node.query("ALTER TABLE s3_test attach partition '0'")
+
+#     def attaching_thread(node):
+#         start = time.time()
+
+#         while time.time() - start < 20:
+#             try:
+#                 node.query("ALTER TABLE s3_test attach partition '0'")
+#             except:
+#                 pass
+#             # node.query("ALTER TABLE s3_test attach partition '0'")
+
+#     node1_dthread = threading.Thread(target=lambda: detaching_thread(node1))
+#     node1_athread = threading.Thread(target=lambda: attaching_thread(node1))
+#     node2_dthread = threading.Thread(target=lambda: detaching_thread(node2))
+#     node2_athread = threading.Thread(target=lambda: attaching_thread(node2))
+#     node1_dthread.start()
+#     node1_athread.start()
+#     node2_dthread.start()
+#     node2_athread.start()
+
+#     node1_dthread.join()
+#     node1_athread.join()
+#     node2_dthread.join()
+#     node2_athread.join()
+
+#     #node1.query("ALTER TABLE s3_test attach partition '0'")
+#     #node2.query("ALTER TABLE s3_test attach partition '0'")
+
+
+#     #node1.query("SYSTEM START REPLICATION QUEUES s3_test")
+#     #node2.query("SYSTEM START REPLICATION QUEUES s3_test")
+  
+#     # for i in range(10):
+#     #    node1.query(f"INSERT INTO s3_test VALUES ({i},'data')")
+
+   
+#     #node2.query_with_retry("ATTACH TABLE s3_test", check_callback=lambda x: len(node2.query("select * from s3_test")) > 0,)
+#     # node2.query("SYSTEM START REPLICATION QUEUES s3_test")
+
+#     # lost_marker = "Will mark replica 2 as lost"
+#     # assert node1.contains_in_log(lost_marker)
+
+#     # node2.query("SYSTEM STOP REPLICATION QUEUES")
+#     # node2.query("ATTACH TABLE s3_test")
+
+#     time.sleep(1)
+
+#     # node2.query("SYSTEM SYNC REPLICA s3_test")
+#     # node1.query("SYSTEM SYNC REPLICA s3_test")
+
+#     node2.query("select * from s3_test")
+#     print("-------------------NODE 1-----------------------------")
+#     print(node1.query("select * from system.parts where table = 's3_test' FORMAT Vertical"))
+#     print("-------------------NODE 2-----------------------------")
+#     print(node2.query("select * from system.parts where table = 's3_test' FORMAT Vertical"))
+
+
+# Will mimic test no such key
+def test_detach_attach_zero_copy_hardlink(started_cluster):
+    policy = "s3"
+    node1 = cluster.instances["node1"]
+    node2 = cluster.instances["node2"]
+
+    for node in ["node1", "node2"]:
+        cluster.instances[node].query(
+            """
+            CREATE TABLE s3_test (id UInt32, value String)
+            ENGINE=ReplicatedMergeTree('/clickhouse/tables/s3_test', '{}')
+            ORDER BY id
+            PARTITION BY id % 10
+            SETTINGS storage_policy='{}', replicated_deduplication_window=0, min_replicated_logs_to_keep=3, max_replicated_logs_to_keep=5, cleanup_delay_period=0, cleanup_delay_period_random_add=0, cleanup_thread_preferred_points_per_iteration=0
+            """.format(
+                "{replica}", policy
+            )
+        )
+
+    node1.query("INSERT INTO s3_test VALUES (0,'data')")
+    node2.query("SYSTEM SYNC REPLICA s3_test", timeout=30)
+
+    node1.query("ALTER TABLE s3_test detach partition '0'")
+    node2.query("DETACH TABLE s3_test")
+
+    for i in range(10):
+        node1.query(f"INSERT INTO s3_test VALUES ({i},'data')")
+    
+    node1.query("ALTER TABLE s3_test attach partition '0'")
+
+    node2.query("ATTACH TABLE s3_test")
+   
+    # node2.query_with_retry("ATTACH TABLE s3_test", check_callback=lambda x: len(node2.query("select * from s3_test")) > 0,)
+
+    time.sleep(2)
+
+    lost_marker = "Will mark replica 2 as lost"
+    assert node1.contains_in_log(lost_marker)
+
+    node2.query("ALTER TABLE s3_test attach part '0_0_0_0'")
+    node2.query("ALTER TABLE s3_test drop part '0_4_4_0'")
+
+    node1.query("select * from s3_test")
+
+    node2.query("select * from s3_test")
+
+    print("-------------------NODE 1-----------------------------")
+    print(node1.query("select * from system.parts where table = 's3_test' FORMAT Vertical"))
+    print("-------------------NODE 2-----------------------------")
+    print(node2.query("select * from system.parts where table = 's3_test' FORMAT Vertical"))
+
+    node1.query("TRUNCATE TABLE s3_test")
+    node2.query("TRUNCATE TABLE s3_test")
+
+
+def test_mutation(started_cluster):
+    policy = "s3"
+    node1 = cluster.instances["node1"]
+    node2 = cluster.instances["node2"]
+
+    for node in ["node1", "node2"]:
+        cluster.instances[node].query(
+            """
+            CREATE TABLE s3_test (id UInt32, value String, value2 String)
+            ENGINE=ReplicatedMergeTree('/clickhouse/tables/s3_test', '{}')
+            ORDER BY id
+            PARTITION BY id % 10
+            SETTINGS storage_policy='{}'
+              , cleanup_delay_period = 5
+              , cleanup_delay_period_random_add = 0
+              , cleanup_thread_preferred_points_per_iteration = 0
+              , min_bytes_for_wide_part = 0
+            """.format(
+                "{replica}", policy
+            )
+        )
+
+    # node2.query("SYSTEM STOP FETCHES s3_test")
+    node1.query("INSERT INTO s3_test VALUES (0,'data1', 'data11'), (0,'data2', 'data22')")
+    
+    # node2.query("SYSTEM SYNC REPLICA s3_test", timeout=30)    
+
+    time.sleep(1)
+
+    # print(node1.query("SELECT * FROM system.parts where table = 's3_test'"))
+    # node2.query("SYSTEM START FETCHES s3_test")
+    node2.query("SYSTEM STOP REPLICATION QUEUES s3_test")
+
+    node1.query("ALTER TABLE s3_test UPDATE value = 'data3' WHERE value = 'data2'")
+    time.sleep(1)
+
+    node1.query("ALTER TABLE s3_test UPDATE value2 = 'data33' WHERE value2 = 'data22'")
+    time.sleep(1)
+
+    # node2.query("ALTER TABLE s3_test DROP PART '0_0_0_0_1'")
+    time.sleep(1)
+
+    node1.query("TRUNCATE TABLE s3_test")
+
+    assert False
+
+
+# def test_detach_attach_zero_copy_hardlink(started_cluster):
+#     policy = "s3"
+#     node1 = cluster.instances["node1"]
+#     node2 = cluster.instances["node2"]
+
+#     for node in ["node1", "node2"]:
+#         cluster.instances[node].query(
+#             """
+#             CREATE TABLE s3_test (id UInt32, value String)
+#             ENGINE=ReplicatedMergeTree('/clickhouse/tables/s3_test', '{}')
+#             ORDER BY id
+#             PARTITION BY id % 10
+#             SETTINGS storage_policy='{}', replicated_deduplication_window=0, min_replicated_logs_to_keep=3, max_replicated_logs_to_keep=5, cleanup_delay_period=0, cleanup_delay_period_random_add=0, cleanup_thread_preferred_points_per_iteration=0
+#             """.format(
+#                 "{replica}", policy
+#             )
+#         )
+
+#     node1.query("INSERT INTO s3_test VALUES (0,'data')")
+#     node2.query("SYSTEM SYNC REPLICA s3_test", timeout=30)
+
+#     node1.query("ALTER TABLE s3_test freeze with name 'freeze1'")    
+
+#     node1.query("ALTER TABLE s3_test detach partition '0'")
+#     node1.query("ALTER TABLE s3_test drop detached partition '0' SETTINGS allow_drop_detached=1 ")
+
+#     node2.query("ALTER TABLE s3_test attach partition '0'")
+
+#     node2.query("ALTER TABLE s3_test drop partition '0'")
+
+#     node1.query("system unfreeze with name 'freeze1'")
+
 
 
 def insert_data_time(node, table, number_of_mb, time, start=0):
