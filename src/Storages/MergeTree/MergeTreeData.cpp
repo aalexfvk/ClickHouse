@@ -2881,7 +2881,9 @@ void MergeTreeData::clearPartsFromFilesystemImpl(const DataPartsVector & parts, 
     {
         get_failed_parts();
 
-        LOG_DEBUG(log, "Failed to remove all parts, all count {}, removed {}", parts.size(), part_names_succeed.size());
+        LOG_DEBUG(
+            log, "Failed to remove all parts, all count {}, removed {}. Reason: '{}'",
+            parts.size(), part_names_succeed.size(), getCurrentExceptionMessage(true));
 
         if (throw_on_error)
             throw;
@@ -5080,7 +5082,7 @@ void MergeTreeData::swapActivePart(MergeTreeData::DataPartPtr part_copy, DataPar
 
             if (original_active_part->getDataPartStorage().supportZeroCopyReplication() &&
                 part_copy->getDataPartStorage().supportZeroCopyReplication() &&
-                original_active_part->getDataPartStorage().getUniqueId() == part_copy->getDataPartStorage().getUniqueId())
+                original_active_part->getDataPartStorage().getRemoteId() == part_copy->getDataPartStorage().getRemoteId())
             {
                 /// May be when several volumes use the same S3/HDFS storage
                 original_active_part->force_keep_shared_data = true;

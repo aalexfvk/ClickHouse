@@ -68,6 +68,8 @@ public:
 
     uint32_t getHardlinkCount(const std::string & path) const override;
 
+    String getLocalId(const std::string & path) const override;
+
     DiskPtr getDisk() const { return disk; }
 
     StoredObjects getStorageObjects(const std::string & path) const override;

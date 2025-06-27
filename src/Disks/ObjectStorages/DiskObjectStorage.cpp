@@ -308,7 +308,7 @@ std::unordered_map<String, String> DiskObjectStorage::getSerializedMetadata(cons
     return metadata_storage->getSerializedMetadata(file_paths);
 }
 
-String DiskObjectStorage::getUniqueId(const String & path) const
+String DiskObjectStorage::getRemoteId(const String & path) const
 {
     String id;
     auto blobs_paths = metadata_storage->getStorageObjects(path);
@@ -321,6 +321,12 @@ bool DiskObjectStorage::checkUniqueId(const String & id) const
 {
     auto object = StoredObject(id);
     return object_storage->exists(object);
+}
+
+String DiskObjectStorage::getLocalId(const String & path) const
+{
+    return metadata_storage->getLocalId(path);
+
 }
 
 void DiskObjectStorage::createHardLink(const String & src_path, const String & dst_path, bool should_send_metadata)

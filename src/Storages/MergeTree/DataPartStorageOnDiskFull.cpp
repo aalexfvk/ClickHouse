@@ -112,13 +112,18 @@ std::vector<std::string> DataPartStorageOnDiskFull::getRemotePaths(const std::st
     return remote_paths;
 }
 
-String DataPartStorageOnDiskFull::getUniqueId() const
+String DataPartStorageOnDiskFull::getRemoteId() const
 {
     auto disk = volume->getDisk();
     if (!disk->supportZeroCopyReplication())
         throw Exception(ErrorCodes::LOGICAL_ERROR, "Disk {} doesn't support zero-copy replication", disk->getName());
 
-    return disk->getUniqueId(fs::path(getRelativePath()) / "checksums.txt");
+    return disk->getRemoteId(fs::path(getRelativePath()) / "checksums.txt"); // TODO alexfvk: move to constant
+}
+
+String DataPartStorageOnDiskFull::getLocalId() const
+{
+    return volume->getDisk()->getLocalId(fs::path(getRelativePath()) / "checksums.txt");
 }
 
 std::unique_ptr<ReadBufferFromFileBase> DataPartStorageOnDiskFull::readFile(

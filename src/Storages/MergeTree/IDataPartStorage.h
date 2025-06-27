@@ -200,7 +200,9 @@ public:
     /// A leak of abstraction.
     /// Return some uniq string for file.
     /// Required for distinguish different copies of the same part on remote FS.
-    virtual String getUniqueId() const = 0;
+    virtual String getRemoteId() const = 0;
+
+    virtual String getLocalId() const = 0;
 
     /// Represents metadata which is required for fetching of part.
     struct ReplicatedFilesDescription

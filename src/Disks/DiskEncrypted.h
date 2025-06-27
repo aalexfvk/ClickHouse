@@ -287,10 +287,10 @@ public:
 
     void truncateFile(const String & path, size_t size) override;
 
-    String getUniqueId(const String & path) const override
+    String getRemoteId(const String & path) const override
     {
         auto wrapped_path = wrappedPath(path);
-        return delegate->getUniqueId(wrapped_path);
+        return delegate->getRemoteId(wrapped_path);
     }
 
     bool checkUniqueId(const String & id) const override

@@ -524,6 +524,7 @@ std::pair<MergeTreeData::MutableDataPartPtr, scope_guard> Fetcher::fetchSelected
     int server_protocol_version = parse<int>(in->getResponseCookie("server_protocol_version", "0"));
     String remote_fs_metadata = parse<String>(in->getResponseCookie("remote_fs_metadata", ""));
 
+    // choosePreferredDisk
     DiskPtr preffered_disk = disk;
 
     if (!preffered_disk)
@@ -819,6 +820,7 @@ MergeTreeData::MutableDataPartPtr Fetcher::downloadPartToDisk(
     auto part_storage_for_loading = std::make_shared<DataPartStorageOnDiskFull>(volume, part_relative_path, part_dir);
     part_storage_for_loading->beginTransaction();
 
+    // removeIfExists()
     if (part_storage_for_loading->exists())
     {
         LOG_WARNING(log, "Directory {} already exists, probably result of a failed fetch. Will remove it before fetching part.",

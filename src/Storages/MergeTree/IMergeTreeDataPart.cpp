@@ -2067,12 +2067,10 @@ DataPartStoragePtr IMergeTreeDataPart::makeCloneInDetached(const String & prefix
     if (!maybe_path_in_detached)
         return nullptr;
 
-    /// In case of zero-copy replication we copy directory instead of hardlinks
-    /// because hardlinks tracking doesn't work for detached parts.
     auto storage_settings = storage.getSettings();
     IDataPartStorage::ClonePartParams params
     {
-        .copy_instead_of_hardlink = isStoredOnRemoteDiskWithZeroCopySupport() && storage.supportsReplication() && (*storage_settings)[MergeTreeSetting::allow_remote_fs_zero_copy_replication],
+        .copy_instead_of_hardlink = false,
         .keep_metadata_version = prefix == "covered-by-broken",
         .make_source_readonly = true,
         .external_transaction = disk_transaction
@@ -2403,9 +2401,14 @@ bool IMergeTreeDataPart::checkAllTTLCalculated(const StorageMetadataPtr & metada
     return true;
 }
 
-String IMergeTreeDataPart::getUniqueId() const
+String IMergeTreeDataPart::getRemoteId() const
 {
-    return getDataPartStorage().getUniqueId();
+    return getDataPartStorage().getRemoteId();
+}
+
+String IMergeTreeDataPart::getLocalId() const
+{
+    return getDataPartStorage().getLocalId();
 }
 
 UInt128 IMergeTreeDataPart::getPartBlockIDHash() const

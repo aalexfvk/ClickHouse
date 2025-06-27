@@ -7,6 +7,7 @@
 #include <Interpreters/Context.h>
 #include <Common/ThreadPool.h>
 #include <Common/threadPoolCallbackRunner.h>
+#include <Common/filesystemHelpers.h>
 #include <Common/logger_useful.h>
 #include <Common/setThreadName.h>
 #include <Core/Field.h>
@@ -283,6 +284,13 @@ catch (Exception & e)
 void IDisk::applyNewSettings(const Poco::Util::AbstractConfiguration & config, ContextPtr /*context*/, const String & config_prefix, const DisksMap & /*map*/)
 {
     copying_thread_pool->setMaxThreads(config.getInt(config_prefix + ".thread_pool_size", 16));
+}
+
+String IDisk::getLocalId(const String & path) const
+{
+    if (supportsStat())
+        return fmt::format("{}", stat(path).st_ino);
+    return path;
 }
 
 }

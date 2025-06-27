@@ -331,7 +331,7 @@ DataPartStorageOnDiskBase::getReplicatedFilesDescriptionForRemoteDisk(const Name
     if (!disk->supportZeroCopyReplication())
         throw Exception(ErrorCodes::LOGICAL_ERROR, "Disk {} doesn't support zero-copy replication", disk->getName());
 
-    description.unique_id = getUniqueId();
+    description.unique_id = getRemoteId();
 
     Names paths;
     auto actual_file_names = getActualFileNamesOnDisk(file_names);

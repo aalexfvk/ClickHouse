@@ -239,7 +239,7 @@ public:
     virtual bool areObjectKeysRandom() const = 0;
 
     /// Get unique id for passed absolute path in object storage.
-    virtual std::string getUniqueId(const std::string & path) const { return path; }
+    virtual std::string getRemoteId(const std::string & path) const { return path; }
 
     /// Remove filesystem cache.
     virtual void removeCacheIfExists(const std::string & /* path */) {}

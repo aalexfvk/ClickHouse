@@ -231,6 +231,11 @@ public:
 
     virtual uint32_t getHardlinkCount(const std::string & path) const = 0;
 
+    virtual String getLocalId(const std::string & path) const
+    {
+        return path;
+    }
+
     /// Read metadata file to string from path
     virtual std::string readFileToString(const std::string & /* path */) const
     {

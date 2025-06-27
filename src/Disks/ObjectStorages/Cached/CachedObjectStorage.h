@@ -105,7 +105,7 @@ public:
 
     bool supportsCache() const override { return true; }
 
-    std::string getUniqueId(const std::string & path) const override { return object_storage->getUniqueId(path); }
+    std::string getRemoteId(const std::string & path) const override { return object_storage->getRemoteId(path); }
 
     bool isReadOnly() const override { return object_storage->isReadOnly(); }
 

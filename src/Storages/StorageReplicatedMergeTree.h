@@ -298,7 +298,7 @@ public:
     /// Unlock shared data part in zookeeper by part id
     /// Return true if data unlocked
     /// Return false if data is still used by another node
-    static std::pair<bool, NameSet> unlockSharedDataByID(
+    static std::pair<bool, NameSet> unlockZeroCopyNameLock(
         String part_id,
         const String & table_uuid,
         const MergeTreePartInfo & part_info,
@@ -309,6 +309,24 @@ public:
         LoggerPtr logger,
         const String & zookeeper_path_old,
         MergeTreeDataFormatVersion data_format_version);
+
+    static bool unlockZeroCopyIdLock(
+        const IMergeTreeDataPart & part,
+        const String & table_shared_id,
+        const String & replica_name,
+        const MergeTreeSettings & settings,
+        LoggerPtr logger,
+        const ZooKeeperWithFaultInjectionPtr & zookeeper_);
+  
+    static bool unlockZeroCopyIdLock(
+        const IDisk & disk,
+        const String & path,
+        const String & table_uuid,
+        const String & replica_name,
+        const MergeTreeSettings & settings,
+        LoggerPtr logger,
+        const ZooKeeperWithFaultInjectionPtr & zookeeper_ptr);
+
 
     /// Fetch part only if some replica has it on shared storage like S3
     MutableDataPartPtr tryToFetchIfShared(const IMergeTreeDataPart & part, const DiskPtr & disk, const String & path) override;
@@ -350,8 +368,15 @@ public:
     /// Check if there are new broken disks and enqueue part recovery tasks.
     void checkBrokenDisks();
 
-    static bool removeSharedDetachedPart(DiskPtr disk, const String & path, const String & part_name, const String & table_uuid,
-        const String & replica_name, const String & zookeeper_path, const ContextPtr & local_context, const zkutil::ZooKeeperPtr & zookeeper);
+    static bool removeSharedDetachedPart(
+        DiskPtr disk,
+        const String & path,
+        const String & part_name,
+        const String & table_uuid,
+        const String & replica_name,
+        const String & zookeeper_path,
+        const ContextPtr & local_context,
+        const zkutil::ZooKeeperPtr & zookeeper);
 
     bool canUseZeroCopyReplication() const;
 
@@ -640,12 +665,20 @@ private:
 
     String getChecksumsForZooKeeper(const MergeTreeDataPartChecksums & checksums) const;
 
-    bool getOpsToCheckPartChecksumsAndCommit(const ZooKeeperWithFaultInjectionPtr & zookeeper, const MutableDataPartPtr & part,
-                                             std::optional<HardlinkedFiles> hardlinked_files, bool replace_zero_copy_lock,
-                                             Coordination::Requests & ops, size_t & num_check_ops);
+    bool getOpsToCheckPartChecksumsAndCommit(
+        const ZooKeeperWithFaultInjectionPtr & zookeeper,
+        const MutableDataPartPtr & part,
+        std::optional<HardlinkedFiles> hardlinked_files,
+        bool replace_zero_copy_lock,
+        Coordination::Requests & ops,
+        size_t & num_check_ops);
 
     /// Accepts a PreActive part, atomically checks its checksums with ones on other replicas and commit the part
-    DataPartsVector checkPartChecksumsAndCommit(Transaction & transaction, const MutableDataPartPtr & part, std::optional<HardlinkedFiles> hardlinked_files = {}, bool replace_zero_copy_lock=false);
+    DataPartsVector checkPartChecksumsAndCommit(
+        Transaction & transaction,
+        const MutableDataPartPtr & part,
+        std::optional<HardlinkedFiles> hardlinked_files = {},
+        bool replace_zero_copy_lock = false);
 
     bool partIsAssignedToBackgroundOperation(const DataPartPtr & part) const override;
 
@@ -964,18 +997,32 @@ private:
     PartitionBlockNumbersHolder allocateBlockNumbersInAffectedPartitions(
         const MutationCommands & commands, ContextPtr query_context, const zkutil::ZooKeeperPtr & zookeeper) const;
 
-    static Strings getZeroCopyPartPath(const MergeTreeSettings & settings, const std::string & disk_type, const String & table_uuid,
-        const String & part_name, const String & zookeeper_path_old);
+    static Strings getZeroCopyPartPath(
+        const MergeTreeSettings & settings,
+        const std::string & disk_type,
+        const String & table_uuid,
+        const String & part_name,
+        const String & zookeeper_path_old);
+
 
     static void createZeroCopyLockNode(
-        const ZooKeeperWithFaultInjectionPtr & zookeeper, const String & zookeeper_node,
-        int32_t mode = zkutil::CreateMode::Persistent, bool replace_existing_lock = false,
-        const String & path_to_set_hardlinked_files = "", const NameSet & hardlinked_files = {});
+        const ZooKeeperWithFaultInjectionPtr & zookeeper,
+        const String & zookeeper_node,
+        int32_t mode = zkutil::CreateMode::Persistent,
+        bool replace_existing_lock = false,
+        const String & path_to_set_hardlinked_files = "",
+        const NameSet & hardlinked_files = {},
+        const String & unique_id_node = "");
 
     static void getZeroCopyLockNodeCreateOps(
-        const ZooKeeperWithFaultInjectionPtr & zookeeper, const String & zookeeper_node, Coordination::Requests & requests,
-        int32_t mode = zkutil::CreateMode::Persistent, bool replace_existing_lock = false,
-        const String & path_to_set_hardlinked_files = "", const NameSet & hardlinked_files = {});
+        const ZooKeeperWithFaultInjectionPtr & zookeeper,
+        const String & zookeeper_node,
+        Coordination::Requests & requests,
+        int32_t mode = zkutil::CreateMode::Persistent,
+        bool replace_existing_lock = false,
+        const String & path_to_set_hardlinked_files = "",
+        const NameSet & hardlinked_files = {},
+        const String & unique_id_node = "");
 
 
     bool removeDetachedPart(DiskPtr disk, const String & path, const String & part_name) override;

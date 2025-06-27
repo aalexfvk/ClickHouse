@@ -466,7 +466,11 @@ public:
 
     /// Return some uniq string for file, overrode for IDiskRemote
     /// Required for distinguish different copies of the same part on remote disk
-    virtual String getUniqueId(const String & path) const { return path; }
+    virtual String getRemoteId(const String & path) const { return path; }
+
+    /// Return some uniq string for file, overrode for IDiskRemote
+    /// Required for distinguish different hardlinks of the same part on the local disk
+    virtual String getLocalId(const String & path) const;
 
     /// Check file exists and ClickHouse has an access to it
     /// Overrode in remote FS disks (s3/hdfs)

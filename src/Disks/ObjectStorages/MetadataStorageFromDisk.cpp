@@ -146,6 +146,12 @@ uint32_t MetadataStorageFromDisk::getHardlinkCount(const std::string & path) con
     return metadata->getRefCount();
 }
 
+String MetadataStorageFromDisk::getLocalId(const std::string & path) const
+{
+    return getDisk()->getLocalId(path);
+}
+
+
 const IMetadataStorage & MetadataStorageFromDiskTransaction::getStorageForNonTransactionalReads() const
 {
     return metadata_storage;

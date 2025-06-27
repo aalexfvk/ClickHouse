@@ -103,7 +103,9 @@ public:
     /// fetches/sends in replicated engines. That's why we reset ref_count to zero.
     std::unordered_map<String, String> getSerializedMetadata(const std::vector<String> & file_paths) const override;
 
-    String getUniqueId(const String & path) const override;
+    String getRemoteId(const String & path) const override;
+
+    String getLocalId(const String & path) const override;
 
     bool checkUniqueId(const String & id) const override;
 
