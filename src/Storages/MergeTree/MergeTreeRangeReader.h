@@ -38,6 +38,9 @@ struct PrewhereExprStep
     /// Some PREWHERE steps should be executed without conversions (e.g. early mutation steps)
     /// A step without alter conversion cannot be executed after step with alter conversions.
     bool perform_alter_conversions = false;
+
+    /// Version of mutation if step is a part of on-fly mutation.
+    std::optional<UInt64> mutation_version;
 };
 
 using PrewhereExprStepPtr = std::shared_ptr<PrewhereExprStep>;
@@ -135,7 +138,6 @@ public:
     size_t numPendingRowsInCurrentGranule() const;
     size_t numRowsInCurrentGranule() const;
     size_t currentMark() const;
-
     bool isCurrentRangeFinished() const;
 
     /// Names of virtual columns that are filled in RangeReader.
@@ -237,6 +239,9 @@ public:
         Columns columns;
         size_t num_rows = 0;
 
+        /// All read marks.
+        MarkRanges read_mark_ranges;
+
         /// The number of rows were added to block as a result of reading chain.
         size_t numReadRows() const { return num_read_rows; }
         /// The number of bytes read from disk.
@@ -245,6 +250,7 @@ public:
     private:
         friend class MergeTreeRangeReader;
         friend class MergeTreeReadersChain;
+        friend class MergeTreePatchReaderMerge;
 
         using NumRows = std::vector<size_t>;
 
@@ -264,6 +270,7 @@ public:
         void adjustLastGranule();
         void addRows(size_t rows) { num_read_rows += rows; }
         void addRange(const MarkRange & range) { started_ranges.push_back({rows_per_granule.size(), range}); }
+        void addReadRange(MarkRange mark_range) { read_mark_ranges.push_back(std::move(mark_range)); }
 
         /// Add current step filter to the result and then for each granule calculate the number of filtered rows at the end.
         /// Remove them and update filter.
@@ -278,6 +285,7 @@ public:
 
         /// Shrinks columns according to the diff between current and previous rows_per_granule.
         void shrink(Columns & old_columns, const NumRows & rows_per_granule_previous) const;
+        void shrink(Block & old_block, const NumRows & rows_per_granule_previous) const;
 
         /// Applies the filter to the columns and updates num_rows.
         void applyFilter(const FilterWithCachedCount & filter);
@@ -290,6 +298,12 @@ public:
 
         /// Contains columns that are not included into result but might be needed for default values calculation.
         Block additional_columns;
+
+        /// Contains virtual columns from original block required for applying patch parts.
+        Block columns_for_patches;
+
+        /// Contains columns with data versions for each column updated by patch parts.
+        Block patch_versions_block;
 
         RangesInfo started_ranges;
         /// The number of rows read from each granule.
@@ -304,6 +318,10 @@ public:
         size_t num_rows_to_skip_in_last_granule = 0;
         /// Without any filtration.
         size_t num_bytes_read = 0;
+        /// Min part offset if _part_offset column is filled.
+        std::optional<UInt64> min_part_offset;
+        /// Max part offset if _part_offset column is filled.
+        std::optional<UInt64> max_part_offset;
 
         /// This filter has the size of total_rows_per_granule. This means that it can be applied to newly read columns.
         /// The result of applying this filter is that only rows that pass all previous filtering steps will remain.
@@ -332,11 +350,14 @@ public:
     const Block & getSampleBlock() const { return result_sample_block; }
     const Block & getReadSampleBlock() const { return read_sample_block; }
 
-    /// Executes actions required before PREWHERE, such as alter conversions and filling defaults.
-    void executeActionsBeforePrewhere(ReadResult & result, Columns & read_columns, const Block & previous_header, size_t num_read_rows) const;
     void executePrewhereActionsAndFilterColumns(ReadResult & result, const Block & previous_header, bool is_last_reader) const;
 
     IMergeTreeReader * getReader() const { return merge_tree_reader; }
+    const PrewhereExprStep * getPrewhereInfo() const { return prewhere_info; }
+
+    static void filterColumns(Columns & columns, const FilterWithCachedCount & filter);
+    static void filterBlock(Block & block, const FilterWithCachedCount & filter);
+    static String addDummyColumnWithRowCount(Block & block, size_t num_rows);
 
 private:
     void fillVirtualColumns(Columns & columns, ReadResult & result, UInt64 leading_begin_part_offset, UInt64 leading_end_part_offset);

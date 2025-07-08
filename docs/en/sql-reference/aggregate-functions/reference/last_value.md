@@ -1,6 +1,9 @@
 ---
-slug: /sql-reference/aggregate-functions/reference/last_value
+description: 'Selects the last encountered value, similar to `anyLast`, but could
+  accept NULL.'
 sidebar_position: 160
+slug: /sql-reference/aggregate-functions/reference/last_value
+title: 'last_value'
 ---
 
 # last_value
@@ -19,13 +22,13 @@ CREATE TABLE test_data
 )
 ENGINE = Memory;
 
-INSERT INTO test_data (a, b) Values (1,null), (2,3), (4, 5), (6,null)
+INSERT INTO test_data (a, b) VALUES (1,null), (2,3), (4, 5), (6,null)
 ```
 
 ### example1 {#example1}
 The NULL value is ignored at default.
 ```sql
-select last_value(b) from test_data
+SELECT last_value(b) FROM test_data
 ```
 
 ```text
@@ -37,7 +40,7 @@ select last_value(b) from test_data
 ### example2 {#example2}
 The NULL value is ignored.
 ```sql
-select last_value(b) ignore nulls from test_data
+SELECT last_value(b) ignore nulls FROM test_data
 ```
 
 ```text
@@ -49,7 +52,7 @@ select last_value(b) ignore nulls from test_data
 ### example3 {#example3}
 The NULL value is accepted.
 ```sql
-select last_value(b) respect nulls from test_data
+SELECT last_value(b) respect nulls FROM test_data
 ```
 
 ```text

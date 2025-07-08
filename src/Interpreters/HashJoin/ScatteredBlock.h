@@ -9,6 +9,7 @@
 #include <Common/logger_useful.h>
 
 #include <boost/noncopyable.hpp>
+#include <fmt/ranges.h>
 
 namespace DB
 {
@@ -223,6 +224,7 @@ struct ScatteredBlock : private boost::noncopyable
     Block && getSourceBlock() && { return std::move(block); }
 
     const auto & getSelector() const { return selector; }
+    auto detachSelector() { return std::move(selector); }
 
     explicit operator bool() const { return !!block; }
 

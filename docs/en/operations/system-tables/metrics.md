@@ -1,10 +1,14 @@
 ---
-description: "System table containing metrics which can be calculated instantly, or have a current value."
+description: 'System table containing metrics which can be calculated instantly, or
+  have a current value.'
+keywords: ['system table', 'metrics']
 slug: /operations/system-tables/metrics
-title: "metrics"
-keywords: ["system table", "metrics"]
+title: 'system.metrics'
 ---
+
 import SystemTableCloud from '@site/docs/_snippets/_system_table_cloud.md';
+
+# system.metrics
 
 <SystemTableCloud/>
 
@@ -21,11 +25,11 @@ You can find all supported metrics in source file [src/Common/CurrentMetrics.cpp
 
 **Example**
 
-``` sql
+```sql
 SELECT * FROM system.metrics LIMIT 10
 ```
 
-``` text
+```text
 ┌─metric───────────────────────────────┬─value─┬─description────────────────────────────────────────────────────────────┐
 │ Query                                │     1 │ Number of executing queries                                            │
 │ Merge                                │     0 │ Number of executing background merges                                  │
@@ -269,6 +273,40 @@ Number of active cache buffers
 ### FilesystemCacheSize {#filesystemcachesize}
 
 Filesystem cache size in bytes
+
+### QueryCacheBytes {#querycachebytes}
+
+Total size of the query cache in bytes.
+
+### QueryCacheEntries {#querycacheentries}
+
+Total number of entries in the query cache.
+
+### UncompressedCacheBytes {#uncompressedcachebytes}
+
+Total size of uncompressed cache in bytes. Uncompressed cache does not usually improve the performance and should be mostly avoided.
+
+### UncompressedCacheCells {#uncompressedcachecells}
+
+### CompiledExpressionCacheBytes {#compiledexpressioncachebytes}
+
+Total bytes used for the cache of JIT-compiled code.
+
+### CompiledExpressionCacheCount {#compiledexpressioncachecount}
+
+Total entries in the cache of JIT-compiled code.
+
+### MMapCacheCells {#mmapcachecells}
+
+The number of files opened with `mmap` (mapped in memory). This is used for queries with the setting `local_filesystem_read_method` set to  `mmap`. The files opened with `mmap` are kept in the cache to avoid costly TLB flushes.
+
+### MarkCacheBytes {#markcachebytes}
+
+Total size of mark cache in bytes
+
+### MarkCacheFiles {#markcachefiles}
+
+Total number of mark files cached in the mark cache
 
 ### GlobalThread {#globalthread}
 
@@ -752,7 +790,7 @@ Value of soft limit on number of CPU slots.
 
 **See Also**
 
-- [system.asynchronous_metrics](../../operations/system-tables/asynchronous_metrics.md#system_tables-asynchronous_metrics) — Contains periodically calculated metrics.
-- [system.events](../../operations/system-tables/events.md#system_tables-events) — Contains a number of events that occurred.
-- [system.metric_log](../../operations/system-tables/metric_log.md#system_tables-metric_log) — Contains a history of metrics values from tables `system.metrics` and `system.events`.
+- [system.asynchronous_metrics](/operations/system-tables/asynchronous_metrics) — Contains periodically calculated metrics.
+- [system.events](/operations/system-tables/events) — Contains a number of events that occurred.
+- [system.metric_log](/operations/system-tables/metric_log) — Contains a history of metrics values from tables `system.metrics` and `system.events`.
 - [Monitoring](../../operations/monitoring.md) — Base concepts of ClickHouse monitoring.

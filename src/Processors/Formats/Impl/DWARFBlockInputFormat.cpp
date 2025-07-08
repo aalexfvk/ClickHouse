@@ -1,4 +1,4 @@
-#include "DWARFBlockInputFormat.h"
+#include <Processors/Formats/Impl/DWARFBlockInputFormat.h>
 #if USE_DWARF_PARSER && defined(__ELF__) && !defined(OS_FREEBSD)
 
 #include <llvm/DebugInfo/DWARF/DWARFFormValue.h>
@@ -146,22 +146,47 @@ DWARFBlockInputFormat::DWARFBlockInputFormat(ReadBuffer & in_, Block header_, co
     : IInputFormat(std::move(header_), &in_), format_settings(format_settings_), num_threads(num_threads_)
 {
     auto tag_names = ColumnString::create();
-    /// Note: TagString() returns empty string for tags that don't exist, and tag 0 doesn't exist.
     constexpr std::string_view DW_TAG_ = "DW_TAG_";
-    for (uint32_t tag = 0; tag <= UINT16_MAX; ++tag)
-        append(tag_names, removePrefix(llvm::dwarf::TagString(tag), DW_TAG_.size()));
+    tag_names->insertDefault();
+    for (uint32_t tag = 1; tag <= UINT16_MAX; ++tag)
+    {
+        auto name = removePrefix(llvm::dwarf::TagString(tag), DW_TAG_.size());
+        if (name.empty())
+        {
+            /// ColumnUnique requires values to be unique, even unused ones.
+            append(tag_names, "unknown: " + std::to_string(tag));
+        }
+        else
+        {
+            append(tag_names, name);
+        }
+    }
     tag_dict_column = ColumnUnique<ColumnString>::create(std::move(tag_names), /*is_nullable*/ false);
 
     auto attr_names = ColumnString::create();
     constexpr std::string_view DW_AT_ = "DW_AT_";
-    for (uint32_t attr = 0; attr <= UINT16_MAX; ++attr)
-        append(attr_names, removePrefix(llvm::dwarf::AttributeString(attr), DW_AT_.size()));
+    attr_names->insertDefault();
+    for (uint32_t attr = 1; attr <= UINT16_MAX; ++attr)
+    {
+        auto name = removePrefix(llvm::dwarf::AttributeString(attr), DW_AT_.size());
+        if (name.empty())
+            append(attr_names, "unknown: " + std::to_string(attr));
+        else
+            append(attr_names, name);
+    }
     attr_name_dict_column = ColumnUnique<ColumnString>::create(std::move(attr_names), /*is_nullable*/ false);
 
     auto attr_forms = ColumnString::create();
     constexpr std::string_view DW_FORM_ = "DW_FORM_";
-    for (uint32_t form = 0; form <= UINT16_MAX; ++form)
-        append(attr_forms, removePrefix(llvm::dwarf::FormEncodingString(form), DW_FORM_.size()));
+    attr_forms->insertDefault();
+    for (uint32_t form = 1; form <= UINT16_MAX; ++form)
+    {
+        auto name = removePrefix(llvm::dwarf::FormEncodingString(form), DW_FORM_.size());
+        if (name.empty())
+            append(attr_forms, "unknown: " + std::to_string(form));
+        else
+            append(attr_forms, name);
+    }
     attr_form_dict_column = ColumnUnique<ColumnString>::create(std::move(attr_forms), /*is_nullable*/ false);
 }
 
@@ -313,7 +338,7 @@ llvm::DWARFFormValue DWARFBlockInputFormat::parseAttribute(
     if (!val.extractValue(*extractor, offset, unit.dwarf_unit->getFormParams(), unit.dwarf_unit))
         throw Exception(ErrorCodes::CANNOT_PARSE_DWARF,
             "Failed to parse attribute {} of form {} at offset {}",
-                llvm::dwarf::AttributeString(attr.Attr), attr.Form, *offset);
+                llvm::dwarf::AttributeString(attr.Attr).operator std::string_view(), attr.Form, *offset);
     return val;
 }
 
@@ -334,7 +359,7 @@ void DWARFBlockInputFormat::skipAttribute(
             attr.Form, *extractor, offset, unit.dwarf_unit->getFormParams()))
                 throw Exception(ErrorCodes::CANNOT_PARSE_DWARF,
                     "Failed to skip attribute {} of form {} at offset {}",
-                    llvm::dwarf::AttributeString(attr.Attr), attr.Form, *offset);
+                    llvm::dwarf::AttributeString(attr.Attr).operator std::string_view(), attr.Form, *offset);
     }
 }
 
@@ -346,7 +371,9 @@ uint64_t DWARFBlockInputFormat::parseAddress(llvm::dwarf::Attribute attr, const 
         (val.getForm() >= llvm::dwarf::DW_FORM_addrx1 &&
          val.getForm() <= llvm::dwarf::DW_FORM_addrx4))
         return fetchFromDebugAddr(unit.debug_addr_base, val.getRawUValue());
-    throw Exception(ErrorCodes::CANNOT_PARSE_DWARF, "Form {} for {} is not supported", llvm::dwarf::FormEncodingString(val.getForm()), llvm::dwarf::AttributeString(attr));
+    throw Exception(ErrorCodes::CANNOT_PARSE_DWARF, "Form {} for {} is not supported",
+        llvm::dwarf::FormEncodingString(val.getForm()).operator std::string_view(),
+        llvm::dwarf::AttributeString(attr).operator std::string_view());
 }
 
 Chunk DWARFBlockInputFormat::parseEntries(UnitState & unit)
@@ -809,7 +836,7 @@ void DWARFBlockInputFormat::parseFilenameTable(UnitState & unit, uint64_t offset
     col->insertDefault();
     /// DWARF v5 changed file indexes from 1-based to 0-based.
     if (prologue.getVersion() <= 4)
-        col->insertDefault();
+        append(col, "<invalid>");
     for (const auto & entry : prologue.FileNames)
     {
         auto val = entry.Name.getAsCString();

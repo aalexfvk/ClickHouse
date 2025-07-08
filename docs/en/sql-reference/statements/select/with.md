@@ -1,6 +1,8 @@
 ---
+description: 'Documentation for WITH Clause'
+sidebar_label: 'WITH'
 slug: /sql-reference/statements/select/with
-sidebar_label: WITH
+title: 'WITH Clause'
 ---
 
 # WITH Clause
@@ -10,18 +12,18 @@ ClickHouse supports Common Table Expressions ([CTE](https://en.wikipedia.org/wik
 Please note that CTEs do not guarantee the same results in all places they are called because the query will be re-executed for each use case.
 
 An example of such behavior is below
-``` sql
-with cte_numbers as
+```sql
+WITH cte_numbers AS
 (
-    select
+    SELECT
         num
-    from generateRandom('num UInt64', NULL)
-    limit 1000000
+    FROM generateRandom('num UInt64', NULL)
+    LIMIT 1000000
 )
-select
+SELECT
     count()
-from cte_numbers
-where num in (select num from cte_numbers)
+FROM cte_numbers
+WHERE num IN (SELECT num FROM cte_numbers)
 ```
 If CTEs were to pass exactly the results and not just a piece of code, you would always see `1000000`
 
@@ -29,11 +31,11 @@ However, due to the fact that we are referring `cte_numbers` twice, random numbe
 
 ## Syntax {#syntax}
 
-``` sql
+```sql
 WITH <expression> AS <identifier>
 ```
 or
-``` sql
+```sql
 WITH <identifier> AS <subquery expression>
 ```
 
@@ -41,8 +43,8 @@ WITH <identifier> AS <subquery expression>
 
 **Example 1:** Using constant expression as "variable"
 
-``` sql
-WITH '2019-08-01 15:23:00' as ts_upper_bound
+```sql
+WITH '2019-08-01 15:23:00' AS ts_upper_bound
 SELECT *
 FROM hits
 WHERE
@@ -52,8 +54,8 @@ WHERE
 
 **Example 2:** Evicting a sum(bytes) expression result from the SELECT clause column list
 
-``` sql
-WITH sum(bytes) as s
+```sql
+WITH sum(bytes) AS s
 SELECT
     formatReadableSize(s),
     table
@@ -64,7 +66,7 @@ ORDER BY s;
 
 **Example 3:** Using results of a scalar subquery
 
-``` sql
+```sql
 /* this example would return TOP 10 of most huge tables */
 WITH
     (
@@ -83,7 +85,7 @@ LIMIT 10;
 
 **Example 4:** Reusing expression in a subquery
 
-``` sql
+```sql
 WITH test1 AS (SELECT i + 1, j + 1 FROM test1)
 SELECT * FROM test1;
 ```
@@ -103,14 +105,14 @@ UNION ALL
 SELECT sum(number) FROM test_table;
 ```
 
-``` text
+```text
 ┌─sum(number)─┐
 │        5050 │
 └─────────────┘
 ```
 
 :::note
-Recursive CTEs rely on the [new query analyzer](/docs/operations/analyzer) introduced in version **`24.3`**. If you're using version **`24.3+`** and encounter a **`(UNKNOWN_TABLE)`** or **`(UNSUPPORTED_METHOD)`** exception, it suggests that the new analyzer is disabled on your instance, role, or profile. To activate the analyzer, enable the setting **`allow_experimental_analyzer`** or update the **`compatibility`** setting to a more recent version.
+Recursive CTEs rely on the [new query analyzer](/operations/analyzer) introduced in version **`24.3`**. If you're using version **`24.3+`** and encounter a **`(UNKNOWN_TABLE)`** or **`(UNSUPPORTED_METHOD)`** exception, it suggests that the new analyzer is disabled on your instance, role, or profile. To activate the analyzer, enable the setting **`allow_experimental_analyzer`** or update the **`compatibility`** setting to a more recent version.
 Starting from version `24.8` the new analyzer has been fully promoted to production, and the setting `allow_experimental_analyzer` has been renamed to `enable_analyzer`.
 :::
 
