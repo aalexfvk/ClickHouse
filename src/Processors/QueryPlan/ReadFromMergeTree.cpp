@@ -2129,7 +2129,13 @@ bool ReadFromMergeTree::requestReadingInOrder(size_t prefix_size, int direction,
 
     /// Disable virtual row for FINAL.
     if (virtual_row_conversion_ && !isQueryWithFinal() && context->getSettingsRef()[Setting::read_in_order_use_virtual_row])
+    {
         virtual_row_conversion = std::make_shared<ExpressionActions>(std::move(*virtual_row_conversion_));
+        LOG_TRACE(
+            log,
+            "Hello: virtual row conversion `{}`", virtual_row_conversion->getActionsDAG().dumpDAG());
+
+    }
 
     updateSortDescription();
 
