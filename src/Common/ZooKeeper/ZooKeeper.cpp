@@ -520,6 +520,10 @@ void ZooKeeper::checkExistsAndGetCreateAncestorsOps(const std::string & path, Co
     {
         if (response[i].error != Coordination::Error::ZOK)
         {
+            if (std::ranges::any_of(requests, [&paths_to_check, i](const auto & req){
+                return req->getPath() == paths_to_check[i];
+            }))
+                continue;
             /// Ephemeral nodes cannot have children
             requests.emplace_back(makeCreateRequest(paths_to_check[i], "", CreateMode::Persistent));
         }

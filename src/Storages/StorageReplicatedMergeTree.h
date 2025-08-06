@@ -312,7 +312,7 @@ public:
         const String & zookeeper_path_old,
         MergeTreeDataFormatVersion data_format_version);
 
-    static bool unlockZeroCopyIdLock(
+    static bool unlockZeroCopyObjectLock(
         const IMergeTreeDataPart & part,
         const String & table_shared_id,
         const String & replica_name,
@@ -320,7 +320,7 @@ public:
         LoggerPtr logger,
         const ZooKeeperWithFaultInjectionPtr & zookeeper_);
   
-    static bool unlockZeroCopyIdLock(
+    static bool unlockZeroCopyObjectLock(
         const IDisk & disk,
         const String & path,
         const String & table_uuid,
@@ -1018,7 +1018,7 @@ private:
         bool replace_existing_lock = false,
         const String & path_to_set_hardlinked_files = "",
         const NameSet & hardlinked_files = {},
-        const String & unique_id_node = "");
+        const Strings & object_lock_nodes = {});
 
     static void getZeroCopyLockNodeCreateOps(
         const ZooKeeperWithFaultInjectionPtr & zookeeper,
@@ -1028,7 +1028,7 @@ private:
         bool replace_existing_lock = false,
         const String & path_to_set_hardlinked_files = "",
         const NameSet & hardlinked_files = {},
-        const String & unique_id_node = "");
+        const Strings & object_lock_nodes = {});
 
 
     bool removeDetachedPart(DiskPtr disk, const String & path, const String & part_name) override;

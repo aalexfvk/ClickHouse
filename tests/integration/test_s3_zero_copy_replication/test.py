@@ -13,6 +13,16 @@ logging.getLogger().addHandler(logging.StreamHandler())
 
 cluster = ClickHouseCluster(__file__)
 
+# kazoo.delete may throw NotEmptyError on concurrent modifications of the path
+def zk_rmr_with_retries(zk, path):
+    for i in range(1, 10):
+        try:
+            zk.delete(path, recursive=True)
+            return
+        except Exception as ex:
+            print(ex)
+            time.sleep(0.5)
+    assert False
 
 @pytest.fixture(scope="module")
 def started_cluster():
@@ -304,6 +314,11 @@ def test_detach_attach_zero_copy_hardlink(started_cluster):
     policy = "s3"
     node1 = cluster.instances["node1"]
     node2 = cluster.instances["node2"]
+
+    zk = cluster.get_kazoo_client("zoo1")
+
+    print("Deleting root ZK zero copy path")
+    zk_rmr_with_retries(zk, "/clickhouse/zero_copy")
 
     for node in ["node1", "node2"]:
         cluster.instances[node].query(

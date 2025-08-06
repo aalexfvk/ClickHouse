@@ -10084,6 +10084,39 @@ zkutil::EphemeralNodeHolderPtr StorageReplicatedMergeTree::lockSharedDataTempora
 
 namespace {
 
+struct FileRemoteStats
+{
+    String file_name;
+    Strings remote_paths;
+    String local_id;
+};
+
+// TODO alexfvk: just traverse by lowlevel disk functions, not file enumerator
+// (because in some cases for example frozen part, we don't have created part structure in memory)
+std::vector<FileRemoteStats> getFileRemoteStats(const IMergeTreeDataPart & part)
+{
+    std::vector<FileRemoteStats> res;
+
+    auto & part_storage = part.getDataPartStorage();
+    for (auto it = part_storage.iterate(); it->isValid(); it->next())
+    {
+        res.push_back({it->name(), part_storage.getRemotePaths(it->name()), part_storage.getLocalId(it->name())});
+    }
+
+    auto projections = part.getProjectionParts();
+    for (const auto & [name, projection_part] : projections)
+    {
+        const auto & projection_storage = projection_part->getDataPartStorage();
+        for (auto it = projection_storage.iterate(); it->isValid(); it->next())
+        {
+            res.push_back({it->name(), projection_storage.getRemotePaths(it->name()), projection_storage.getLocalId(it->name())});
+        }
+    }
+
+    return res;
+}
+
+
 /**
 # Zero-copy locks schema
 
@@ -10102,95 +10135,119 @@ root_node / "parts" / part_base / mutation / remote_id / replica      // 1) Trac
  				 /part_exclusive_lock
 */ 				 
 
-String getZeroCopyIdLockPath(
+String getZeroCopyObjectLockPath(
     const MergeTreeSettings & settings, const std::string & disk_type, const String & table_uuid,
     const String & remote_id)
 {
     fs::path root_path = settings[MergeTreeSetting::remote_fs_zero_copy_zookeeper_path].toString();
     String zero_copy_disk = fmt::format("zero_copy_{}", disk_type);
 
-    return root_path / zero_copy_disk / table_uuid / "remote_ids" / remote_id;
+    return root_path / zero_copy_disk / table_uuid / "objects" / remote_id;
 }
 
-bool unlockZeroCopyIdLockImpl(
-    const String & remote_id,
-    const String & local_id,
+bool unlockZeroCopyObjectLockImpl(
+    std::vector<FileRemoteStats> file_remote_stats,
     const String & disk_type,
-    size_t ref_count,
+    size_t /*ref_count*/,
     const String & table_uuid,
     const String & replica_name,
     const MergeTreeSettings & settings,
     LoggerPtr logger,
     const ZooKeeperWithFaultInjectionPtr & zookeeper_ptr)
 {
-    String lock_path = getZeroCopyIdLockPath(settings, disk_type, table_uuid, remote_id);
+    Coordination::Requests requests;
+    for (const auto & file: file_remote_stats)
+    {
+        for (const auto & remote_id: file.remote_paths)
+        {
+            String lock_path = getZeroCopyObjectLockPath(settings, disk_type, table_uuid, remote_id);
+            requests.push_back(zkutil::makeListRequest(lock_path));
+        }
+    }
+
+    // String lock_path = getZeroCopyObjectLockPath(settings, disk_type, table_uuid, remote_id);
 
     Strings replicas;
-    auto code = zookeeper_ptr->tryGetChildren(lock_path, replicas);
+    // auto code = zookeeper_ptr->tryGetChildren(lock_path, replicas);
+    Coordination::Responses responses;
+    [[maybe_unused]] auto code = zookeeper_ptr->tryMulti(requests, responses);
 
-    if (auto replica_it = std::ranges::find(replicas, replica_name); replica_it != replicas.end())
+    for (size_t i = 0; i < responses.size(); i++)
     {
-        // // Unlock should be called for parts whuch are about to remove. And it is not expected hardlinks to be made
-        // // for a part while it is being removed.
-        // // If it happens data can be lost because unque id lock is removed below
-        // size_t ref_count = part.getDataPartStorage().getRefCount("checksums.txt"); // TO DO alexfvk: do as one command (by stat)
-        // String local_id = part.getDataPartStorage().getLocalId();
-
-        if (ref_count == 0)
-        {
-            // Remove local_id lock
-            zookeeper_ptr->tryRemove(lock_path + "/" + replica_name + "/" + local_id);
-            LOG_INFO(logger, "Hello zero-copy id lock {} removed for replica {} remote_id: {}", lock_path, replica_name, remote_id);
-
-            // Check other local_id locks existence for the replica
-            Strings local_ids;
-            zookeeper_ptr->tryGetChildren(lock_path + "/" + replica_name, local_ids); // TODO: make in transaction or just remove without read
-
-            if (local_ids.empty())
-            {
-                // If there are no other local refs remove replica from id lock
-                zookeeper_ptr->tryRemove(lock_path + "/" + replica_name);
-                replicas.erase(replica_it);
-                LOG_INFO(logger, "Hello Removed sucssefully {} for replica {}", lock_path, replica_name);
-            }
-            else
-                LOG_INFO(
-                    logger,
-                    "Hello Can't remove {} for replica {} because there are other local ids: {}",
-                    lock_path,
-                    replica_name,
-                    boost::algorithm::join(local_ids, ", "));
-        }
-        else
-        {
-            LOG_INFO(logger, "Hello zero-copy ID lock {} is not removed for replica {} and local_id: {} because hardlinks count: {}",
-                lock_path, replica_name, local_id, ref_count);
-        }
-    }
-    else
-    {
-        // LOG_WARNING file is not locked
-    }
-
-    if (code != Coordination::Error::ZOK)
-    {
-        LOG_INFO(logger, "Cannot get zero-copy ID lock node {}", lock_path);
-        // TODO alexfvk handle exception
-        return false;
-    }
-    else
-    {
-        LOG_INFO(logger, "Hello for remote_id {} replicas: [{}]", remote_id, boost::algorithm::join(replicas, ", "));
-        if (replicas.size() > 0)
-        {
-            LOG_INFO(logger, "Can't remove blobs. There exist replicas linking to remote_id `{}` replicas: [{}]",
-                remote_id, boost::algorithm::join(replicas, ", "));
-
-            return false;
-        }
+        auto list_response = dynamic_cast<const Coordination::ListResponse *>(responses.at(i).get());
+        chassert(list_response);
+        LOG_INFO(
+            logger,
+            "Hello: Got list response for lock_path: {} replica {} list: {}",
+            getZeroCopyObjectLockPath(settings, disk_type, table_uuid, file_remote_stats[0].remote_paths[0]),
+            replica_name,
+            fmt::join(list_response->names, ", "));
     }
 
     return true;
+    // if (auto replica_it = std::ranges::find(replicas, replica_name); replica_it != replicas.end())
+    // {
+    //     // // Unlock should be called for parts whuch are about to remove. And it is not expected hardlinks to be made
+    //     // // for a part while it is being removed.
+    //     // // If it happens data can be lost because unque id lock is removed below
+    //     // size_t ref_count = part.getDataPartStorage().getRefCount("checksums.txt"); // TO DO alexfvk: do as one command (by stat)
+    //     // String local_id = part.getDataPartStorage().getLocalId();
+
+    //     if (ref_count == 0)
+    //     {
+    //         // Remove local_id lock
+    //         zookeeper_ptr->tryRemove(lock_path + "/" + replica_name + "/" + local_id);
+    //         LOG_INFO(logger, "Hello zero-copy id lock {} removed for replica {} remote_id: {}", lock_path, replica_name, remote_id);
+
+    //         // Check other local_id locks existence for the replica
+    //         Strings local_ids;
+    //         zookeeper_ptr->tryGetChildren(lock_path + "/" + replica_name, local_ids); // TODO: make in transaction or just remove without read
+
+    //         if (local_ids.empty())
+    //         {
+    //             // If there are no other local refs remove replica from id lock
+    //             zookeeper_ptr->tryRemove(lock_path + "/" + replica_name);
+    //             replicas.erase(replica_it);
+    //             LOG_INFO(logger, "Hello Removed sucssefully {} for replica {}", lock_path, replica_name);
+    //         }
+    //         else
+    //             LOG_INFO(
+    //                 logger,
+    //                 "Hello Can't remove {} for replica {} because there are other local ids: {}",
+    //                 lock_path,
+    //                 replica_name,
+    //                 boost::algorithm::join(local_ids, ", "));
+    //     }
+    //     else
+    //     {
+    //         LOG_INFO(logger, "Hello zero-copy ID lock {} is not removed for replica {} and local_id: {} because hardlinks count: {}",
+    //             lock_path, replica_name, local_id, ref_count);
+    //     }
+    // }
+    // else
+    // {
+    //     // LOG_WARNING file is not locked
+    // }
+
+    // if (code != Coordination::Error::ZOK)
+    // {
+    //     LOG_INFO(logger, "Cannot get zero-copy ID lock node {}", lock_path);
+    //     // TODO alexfvk handle exception
+    //     return false;
+    // }
+    // else
+    // {
+    //     LOG_INFO(logger, "Hello for remote_id {} replicas: [{}]", remote_id, boost::algorithm::join(replicas, ", "));
+    //     if (replicas.size() > 0)
+    //     {
+    //         LOG_INFO(logger, "Can't remove blobs. There exist replicas linking to remote_id `{}` replicas: [{}]",
+    //             remote_id, boost::algorithm::join(replicas, ", "));
+
+    //         return false;
+    //     }
+    // }
+
+    // return true;
 }
 
 }
@@ -10231,8 +10288,8 @@ void StorageReplicatedMergeTree::getLockSharedDataOps(
         *getSettings(), part.getDataPartStorage().getDiskType(), getTableSharedID(),
         part.name, zookeeper_path);
     
-    String id_lock_path = getZeroCopyIdLockPath(
-        *getSettings(), part.getDataPartStorage().getDiskType(), getTableSharedID(), remote_id);
+    // String object_lock_path = getZeroCopyObjectLockPath(
+    //     *getSettings(), part.getDataPartStorage().getDiskType(), getTableSharedID(), remote_id);
 
     String path_to_set_hardlinked_files;
     NameSet hardlinks;
@@ -10246,10 +10303,27 @@ void StorageReplicatedMergeTree::getLockSharedDataOps(
         hardlinks = hardlinked_files->hardlinks_from_source_part;
     }
 
+    // TODO alexfvk: control this under setting (checksums or all)
+    std::vector<FileRemoteStats> file_remote_stats = getFileRemoteStats(part);    
+
     for (const auto & zc_zookeeper_path : zc_zookeeper_paths)
     {
         String name_lock_node = fs::path(zc_zookeeper_path) / remote_id / replica_name;
-        String id_lock_node = fs::path(zc_zookeeper_path) / id_lock_path / replica_name / part.getLocalId();
+        // String object_lock_node = fs::path(zc_zookeeper_path) / id_lock_path / replica_name / part.getLocalId();
+
+        Strings object_lock_nodes;
+        for (const auto & file_stat: file_remote_stats)
+        {            
+            for (const auto & remote_path: file_stat.remote_paths)
+            {
+                String object_lock_path = getZeroCopyObjectLockPath(
+                    *getSettings(), part.getDataPartStorage().getDiskType(), hardlinked_files->source_table_shared_id, remote_path);
+
+                object_lock_nodes.emplace_back(fs::path(zc_zookeeper_path) / object_lock_path / replica_name / file_stat.local_id);
+                LOG_DEBUG(&Poco::Logger::get("Hello"), "Hello getLockSharedDataOps object_lock_nodes: {}", object_lock_nodes.back());
+            }            
+        }
+
 
         if (!path_to_set_hardlinked_files.empty() && !hardlinks.empty())
         {
@@ -10257,14 +10331,13 @@ void StorageReplicatedMergeTree::getLockSharedDataOps(
                            "hardlinks: [{}]",
                       name_lock_node, path_to_set_hardlinked_files,
                       boost::algorithm::join(hardlinks, ","));
-        }
+        }        
 
         getZeroCopyLockNodeCreateOps(
             zookeeper, name_lock_node, requests, zkutil::CreateMode::Persistent,
-            replace_existing_lock, path_to_set_hardlinked_files, hardlinks, id_lock_node);
+            replace_existing_lock, path_to_set_hardlinked_files, hardlinks, object_lock_nodes);
     }
 }
-
 
 void StorageReplicatedMergeTree::lockSharedData(
     const IMergeTreeDataPart & part,
@@ -10302,19 +10375,31 @@ void StorageReplicatedMergeTree::lockSharedData(
         hardlinks = hardlinked_files->hardlinks_from_source_part;
     }
 
-    String unique_id_base
-        = getZeroCopyIdLockPath(*getSettings(), part.getDataPartStorage().getDiskType(), hardlinked_files->source_table_shared_id, id);
+    // TODO alexfvk: control this under setting (checksums or all)
+    std::vector<FileRemoteStats> file_remote_stats = getFileRemoteStats(part);    
 
     for (const auto & zc_zookeeper_path : zc_zookeeper_paths)
     {
-        String zookeeper_node = fs::path(zc_zookeeper_path) / id / replica_name;
-        String unique_id_node = fs::path(zc_zookeeper_path) / unique_id_base / replica_name / part.getLocalId();
+        String zookeeper_node = fs::path(zc_zookeeper_path) / id / replica_name;       
+        Strings object_lock_nodes;
+
+        for (const auto & file_stat: file_remote_stats)
+        {            
+            for (const auto & remote_path: file_stat.remote_paths)
+            {
+                String object_lock_path = getZeroCopyObjectLockPath(
+                    *getSettings(), part.getDataPartStorage().getDiskType(), hardlinked_files->source_table_shared_id, remote_path);
+
+                object_lock_nodes.emplace_back(fs::path(zc_zookeeper_path) / object_lock_path / replica_name / file_stat.local_id);
+            }
+            
+        }
 
         LOG_TRACE(log, "Trying to create zookeeper persistent lock {} with hardlinks [{}]", zookeeper_node, fmt::join(hardlinks, ", "));
 
         createZeroCopyLockNode(
             zookeeper, zookeeper_node, zkutil::CreateMode::Persistent,
-            replace_existing_lock, path_to_set_hardlinked_files, hardlinks, unique_id_node);
+            replace_existing_lock, path_to_set_hardlinked_files, hardlinks, object_lock_nodes);
 
         LOG_TRACE(log, "Zookeeper persistent lock {} created", zookeeper_node);
     }
@@ -10436,7 +10521,7 @@ StorageReplicatedMergeTree::unlockSharedData(const IMergeTreeDataPart & part, co
         part.getRemoteId(), shared_id, part.info, replica_name,
         part.getDataPartStorage().getDiskType(), zookeeper, *getSettings(), log.load(), zookeeper_path, format_version);
 
-    if (!unlockZeroCopyIdLock(part, shared_id, replica_name, *getSettings(), log.load(), zookeeper))
+    if (!unlockZeroCopyObjectLock(part, shared_id, replica_name, *getSettings(), log.load(), zookeeper))
     {
         return {false, {}};
     }
@@ -10444,22 +10529,30 @@ StorageReplicatedMergeTree::unlockSharedData(const IMergeTreeDataPart & part, co
     return res;
 }
 
-bool StorageReplicatedMergeTree::unlockZeroCopyIdLock(const IMergeTreeDataPart & part, const String & table_shared_id, const String & replica_name, const MergeTreeSettings & settings, LoggerPtr logger, const ZooKeeperWithFaultInjectionPtr & zookeeper_ptr)
+struct ZeroCopyId
+{
+    String remote_id;
+    String local_id;
+};
+
+bool StorageReplicatedMergeTree::unlockZeroCopyObjectLock(const IMergeTreeDataPart & part, const String & table_shared_id, const String & replica_name, const MergeTreeSettings & settings, LoggerPtr logger, const ZooKeeperWithFaultInjectionPtr & zookeeper_ptr)
 {
     LOG_INFO(logger, "Hello 1");
     String remote_id = part.getRemoteId();
     boost::replace_all(remote_id, "/", "_");
     // auto part_name = part.info.getPartNameV1();
 
-    // Unlock should be called for parts whuch are about to remove. And it is not expected hardlinks to be made
-    // for a part while it is being removed.
-    // If it happens data can be lost because unque id lock is removed below
+    // // Unlock should be called for parts whuch are about to remove. And it is not expected hardlinks to be made
+    // // for a part while it is being removed.
+    // // If it happens data can be lost because unque id lock is removed below
     size_t ref_count = part.getDataPartStorage().getRefCount("checksums.txt"); // TODO alexfvk: do this two lines as one command (by stat)
-    String local_unique_id = part.getDataPartStorage().getLocalId();
+    // String local_unique_id = part.getDataPartStorage().getLocalId();
 
-    return unlockZeroCopyIdLockImpl(
-        remote_id,
-        local_unique_id,
+    // TODO alexfvk: under setting checksums or all
+    std::vector<FileRemoteStats> file_remote_stats = getFileRemoteStats(part); 
+
+    return unlockZeroCopyObjectLockImpl(
+        file_remote_stats,
         part.getDataPartStorage().getDiskType(),
         ref_count,
         table_shared_id,
@@ -10469,22 +10562,24 @@ bool StorageReplicatedMergeTree::unlockZeroCopyIdLock(const IMergeTreeDataPart &
         zookeeper_ptr);
 }
 
-bool StorageReplicatedMergeTree::unlockZeroCopyIdLock(
+bool StorageReplicatedMergeTree::unlockZeroCopyObjectLock(
     const IDisk & disk,
     const String & path,
-    const String & table_uuid,
-    const String & replica_name_,
-    const MergeTreeSettings & settings,
-    LoggerPtr logger,
-    const ZooKeeperWithFaultInjectionPtr & zookeeper_ptr)
+    const String & /*table_uuid*/,
+    const String & /*replica_name_*/,
+    const MergeTreeSettings & /*settings*/,
+    LoggerPtr /*logger*/,
+    const ZooKeeperWithFaultInjectionPtr & /*zookeeper_ptr*/)
 {
     fs::path checksums = fs::path(path) / IMergeTreeDataPart::FILE_FOR_REFERENCES_CHECK;
-    size_t ref_count = disk.getRefCount(checksums);
-    String local_id = disk.getLocalId(checksums);
-    String remote_id = disk.getRemoteId(checksums);
+    [[maybe_unused]] size_t ref_count = disk.getRefCount(checksums);
+    //String local_id = disk.getLocalId(checksums);
+    //String remote_id = disk.getRemoteId(checksums);
 
-    return unlockZeroCopyIdLockImpl(
-        remote_id, local_id, disk.getDataSourceDescription().toString(), ref_count, table_uuid, replica_name_, settings, logger, zookeeper_ptr);
+    // TODO alexfvk: traverse disk for getting all remote_ids
+    //return unlockZeroCopyObjectLockImpl(
+    //    remote_id, local_id, disk.getDataSourceDescription().toString(), ref_count, table_uuid, replica_name_, settings, logger, zookeeper_ptr);
+    return true;
 }
 
 namespace
@@ -10508,7 +10603,7 @@ std::tuple<bool, NameSet, String> getParentLockedBlobs(const ZooKeeperWithFaultI
     if (part_info.mutation == 0)
         return {false, files_not_to_remove, ""};
 
-    String base = fmt::format("{}_{}_{}_{}", part_info.partition_id, part_info.min_block, part_info.max_block, part_info.level);
+    String base = fmt::format("{}_{}_{}_{}", part_info.getPartitionId(), part_info.min_block, part_info.max_block, part_info.level);
     /// Getting all zero copy parts
     Strings parts_str;
     zookeeper_ptr->tryGetChildren(zero_copy_part_path_prefix, parts_str);
@@ -10870,7 +10965,7 @@ Strings StorageReplicatedMergeTree::getZeroCopyPartPath(
     auto part_info = MergeTreePartInfo::fromPartName(part_name, MERGE_TREE_DATA_MIN_FORMAT_VERSION_WITH_CUSTOM_PARTITIONING);
 
     String zero_copy = fmt::format("zero_copy_{}", disk_type);    
-    String part_base = fmt::format("{}_{}_{}_{}", part_info.partition_id, part_info.min_block, part_info.max_block, part_info.level);
+    String part_base = fmt::format("{}_{}_{}_{}", part_info.getPartitionId(), part_info.min_block, part_info.max_block, part_info.level);
     String mutation = std::to_string(part_info.mutation);
 
     // String new_path = fs::path(settings[MergeTreeSetting::remote_fs_zero_copy_zookeeper_path].toString()) / zero_copy / table_uuid / "parts" / part_name;
@@ -11219,7 +11314,7 @@ bool StorageReplicatedMergeTree::createEmptyPartInsteadOfLost(zkutil::ZooKeeperP
 void StorageReplicatedMergeTree::getZeroCopyLockNodeCreateOps(
     const ZooKeeperWithFaultInjectionPtr & zookeeper, const String & zookeeper_node, Coordination::Requests & requests,
     int32_t mode, bool replace_existing_lock,
-    const String & path_to_set_hardlinked_files, const NameSet & hardlinked_files, const String & unique_id_node)
+    const String & path_to_set_hardlinked_files, const NameSet & hardlinked_files, const Strings & object_lock_nodes)
 {
 
     /// Ephemeral locks can be created only when we fetch shared data.
@@ -11228,7 +11323,12 @@ void StorageReplicatedMergeTree::getZeroCopyLockNodeCreateOps(
     if (mode == zkutil::CreateMode::Persistent)
     {
         zookeeper->checkExistsAndGetCreateAncestorsOps(zookeeper_node, requests);
-        zookeeper->checkExistsAndGetCreateAncestorsOps(unique_id_node, requests);
+        // zookeeper->checkExistsAndGetCreateAncestorsOps(unique_id_node, requests);
+        for (const auto & path: object_lock_nodes)
+        {
+            LOG_DEBUG(&Poco::Logger::get("Hello"), "Hello getZeroCopyLockNodeCreateOps object_lock_nodes: {}", path);
+            zookeeper->checkExistsAndGetCreateAncestorsOps(path, requests);
+        }
     }
 
     if (replace_existing_lock && zookeeper->exists(zookeeper_node))
@@ -11258,14 +11358,21 @@ void StorageReplicatedMergeTree::getZeroCopyLockNodeCreateOps(
         requests.emplace_back(zkutil::makeCreateRequest(zookeeper_node, "", mode));
     }
 
-    if (mode == zkutil::CreateMode::Persistent && !zookeeper->exists(unique_id_node))
-        requests.emplace_back(zkutil::makeCreateRequest(unique_id_node, "", mode));
+    //if (mode == zkutil::CreateMode::Persistent && !zookeeper->exists(unique_id_node))
+    //    requests.emplace_back(zkutil::makeCreateRequest(unique_id_node, "", mode));
+
+    /// Make object locks
+    for (const auto & path: object_lock_nodes)
+    {
+        if (mode == zkutil::CreateMode::Persistent && !zookeeper->exists(path))
+            requests.emplace_back(zkutil::makeCreateRequest(path, "", mode));
+    }
 }
 
 
 void StorageReplicatedMergeTree::createZeroCopyLockNode(
     const ZooKeeperWithFaultInjectionPtr & zookeeper, const String & zookeeper_node, int32_t mode,
-    bool replace_existing_lock, const String & path_to_set_hardlinked_files, const NameSet & hardlinked_files, const String & unique_id_node)
+    bool replace_existing_lock, const String & path_to_set_hardlinked_files, const NameSet & hardlinked_files, const Strings & object_lock_nodes)
 {
     /// In rare case other replica can remove path between createAncestors and createIfNotExists
     /// So we make up to 5 attempts
@@ -11285,7 +11392,7 @@ void StorageReplicatedMergeTree::createZeroCopyLockNode(
         Coordination::Requests ops;
         Coordination::Responses responses;
         getZeroCopyLockNodeCreateOps(
-            zookeeper, zookeeper_node, ops, mode, replace_existing_lock, path_to_set_hardlinked_files, hardlinked_files, unique_id_node);
+            zookeeper, zookeeper_node, ops, mode, replace_existing_lock, path_to_set_hardlinked_files, hardlinked_files, object_lock_nodes);
 
         fiu_do_on(FailPoints::zero_copy_lock_zk_fail_before_op, { zookeeper->forceFailureBeforeOperation(); });
         fiu_do_on(FailPoints::zero_copy_lock_zk_fail_after_op, { zookeeper->forceFailureAfterOperation(); });
@@ -11397,7 +11504,7 @@ bool StorageReplicatedMergeTree::removeSharedDetachedPart(DiskPtr disk, const St
     // }
 
     // TODO alexfvk: unlockSharedDataByID, otherwise trash
-    keep_shared = !unlockZeroCopyIdLock(
+    keep_shared = !unlockZeroCopyObjectLock(
         *disk,
         path,
         table_uuid,

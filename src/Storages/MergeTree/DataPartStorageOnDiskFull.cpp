@@ -113,6 +113,30 @@ std::vector<std::string> DataPartStorageOnDiskFull::getRemotePaths(const std::st
     return remote_paths;
 }
 
+
+// std::vector<std::string> DataPartStorageOnDiskFull::getRemotePaths() const
+// {
+//     std::vector<std::string> paths;
+
+//     for (auto it = getDataPartStorage().iterate(); it->isValid(); it->next())
+//     {
+//         paths.append_range(getRemotePaths(it->name));
+//     }
+
+//     auto projections = getProjectionParts();
+//     for (const auto & [name, projection_part] : projections)
+//     {
+//         const auto & projection_storage = projection_part->getDataPartStorage();
+//         for (auto it = projection_storage.iterate(); it->isValid(); it->next())
+//         {
+//             paths.append_range(getRemotePaths(it->name));
+//         }
+//     }
+
+//     return paths;
+// }
+
+
 String DataPartStorageOnDiskFull::getRemoteId() const
 {
     auto disk = volume->getDisk();
@@ -124,7 +148,12 @@ String DataPartStorageOnDiskFull::getRemoteId() const
 
 String DataPartStorageOnDiskFull::getLocalId() const
 {
-    return volume->getDisk()->getLocalId(fs::path(getRelativePath()) / "checksums.txt");
+    return getLocalId("checksums.txt");
+}
+
+String DataPartStorageOnDiskFull::getLocalId(const std::string & file_name) const
+{
+    return volume->getDisk()->getLocalId(fs::path(getRelativePath()) / file_name);
 }
 
 std::unique_ptr<ReadBufferFromFileBase> DataPartStorageOnDiskFull::readFile(

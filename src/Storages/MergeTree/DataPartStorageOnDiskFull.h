@@ -24,8 +24,20 @@ public:
     size_t getFileSize(const std::string & file_name) const override;
     UInt32 getRefCount(const std::string & file_name) const override;
     std::vector<std::string> getRemotePaths(const std::string & file_name) const override;
+    /// Return remote paths for all files in the part
+
+    // struct RemoteFileStats
+    // {
+    //     String file_name;
+    //     String local_id;
+    //     Strings remote_paths;
+    // };
+
+    // std::vector<std::string> getRemoteFileStats() const override;
     String getRemoteId() const override;
     String getLocalId() const override;
+    String getLocalId(const std::string & file_name) const override; /// TODO alexfvk: make virtual
+
 
     std::unique_ptr<ReadBufferFromFileBase> readFile(
         const std::string & name,

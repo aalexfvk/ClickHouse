@@ -131,6 +131,7 @@ public:
 
     /// Get path on remote filesystem from file name on local filesystem.
     virtual std::vector<std::string> getRemotePaths(const std::string & file_name) const = 0;
+    // virtual std::vector<std::string> getRemoteFileStats() const = 0;
 
     virtual UInt64 calculateTotalSizeOnDisk() const = 0;
 
@@ -202,6 +203,7 @@ public:
     virtual String getRemoteId() const = 0;
 
     virtual String getLocalId() const = 0;
+    virtual String getLocalId(const std::string & file_name) const = 0;
 
     /// Represents metadata which is required for fetching of part.
     struct ReplicatedFilesDescription

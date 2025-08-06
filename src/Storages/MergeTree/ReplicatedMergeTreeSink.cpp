@@ -1074,8 +1074,8 @@ std::pair<std::vector<String>, bool> ReplicatedMergeTreeSinkImpl<async_insert>::
         if (shared_lock_ops_id_begin <= failed_op_idx && failed_op_idx < shared_lock_op_id_end)
             throw Exception(ErrorCodes::LOGICAL_ERROR,
                             "Creating shared lock for part {} has failed with error: {}. It's a bug. "
-                            "No race is possible since it is a new part.",
-                            part->name, multi_code);
+                            "No race is possible since it is a new part. path {}",
+                            part->name, multi_code, failed_op_path);
 
         if (multi_code == Coordination::Error::ZNODEEXISTS && failed_op_path == quorum_info.status_path)
             throw Exception(ErrorCodes::UNSATISFIED_QUORUM_FOR_PREVIOUS_WRITE,
