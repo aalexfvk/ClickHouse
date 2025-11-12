@@ -402,7 +402,7 @@ bool ParserInterpolateExpressionList::parseImpl(Pos & pos, ASTPtr & node, Expect
 
 bool ParserTTLExpressionList::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
 {
-    return ParserList(std::make_unique<ParserTTLElement>(), std::make_unique<ParserToken>(TokenType::Comma), false)
+    return ParserList(std::make_unique<ParserTTLElement>(), std::make_unique<ParserToken>(TokenType::Comma), /* allow_empty_ = */ false)
         .parse(pos, node, expected);
 }
 
@@ -862,7 +862,7 @@ static void highlightRegexps(const ASTPtr & node, Expected & expected, size_t de
              || func->name == "countMatches" || func->name == "splitByRegexp"
              || func->name == "regexp_replace" || func->name == "REGEXP_REPLACE")
     {
-        is_regexp = true;
+        is_regexp = true;  /// NOLINT(clang-analyzer-deadcode.DeadStores)
     }
     else
     {

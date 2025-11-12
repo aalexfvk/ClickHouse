@@ -69,6 +69,8 @@ class RestorerFromBackup;
 class ConditionSelectivityEstimator;
 using ConditionSelectivityEstimatorPtr = std::shared_ptr<ConditionSelectivityEstimator>;
 
+struct RangesInDataParts;
+
 class ActionsDAG;
 
 /** Storage. Describes the table. Responsible for
@@ -98,6 +100,15 @@ public:
 
     virtual bool isDataLake() const { return false; }
 
+    /// Returns true if the storage is an external database (MySQL, PostgreSQL, MongoDB, etc.)
+    virtual bool isExternalDatabase() const { return false; }
+
+    /// Returns true if the storage is object storage (S3, Azure, GCS, HDFS, etc.)
+    virtual bool isObjectStorage() const { return false; }
+
+    /// Returns true if the storage is a message queue (Kafka, RabbitMQ, NATS)
+    virtual bool isMessageQueue() const { return false; }
+
     /// Returns true if the storage receives data from a remote server or servers.
     virtual bool isRemote() const { return false; }
 
@@ -122,7 +133,7 @@ public:
     /// Returns true if the storage supports queries with the PREWHERE section.
     virtual bool supportsPrewhere() const { return false; }
 
-    virtual ConditionSelectivityEstimatorPtr getConditionSelectivityEstimatorByPredicate(const StorageSnapshotPtr &, const ActionsDAG *, ContextPtr) const;
+    virtual ConditionSelectivityEstimatorPtr getConditionSelectivityEstimator(const RangesInDataParts &, ContextPtr) const;
 
     /// Returns which columns supports PREWHERE, or empty std::nullopt if all columns is supported.
     /// This is needed for engines whose aggregates data from multiple tables, like Merge.
@@ -196,7 +207,10 @@ public:
     /// Get immutable version (snapshot) of storage metadata. Metadata object is
     /// multiversion, so it can be concurrently changed, but returned copy can be
     /// used without any locks.
-    virtual StorageMetadataPtr getInMemoryMetadataPtr() const { return metadata.get(); }
+    virtual StorageMetadataPtr getInMemoryMetadataPtr(bool /*bypass_metadata_cache*/ = false) const // NOLINT
+    {
+        return metadata.get();
+    }
 
     /// Update storage metadata. Used in ALTER or initialization of Storage.
     /// Metadata object is multiversion, so this method can be called without

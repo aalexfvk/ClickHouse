@@ -1350,7 +1350,7 @@ StorageMerge::StorageListWithLocks ReadFromMerge::getSelectedTables(
             ColumnWithTypeAndName(std::make_shared<DataTypeString>(), "_table")
         };
         // Extract predicate part, that could be evaluated only with _database and _table columns
-        auto table_filter_dag = VirtualColumnUtils::splitFilterDagForAllowedInputs(filter_actions_dag->getOutputs().at(0), &sample_block);
+        auto table_filter_dag = VirtualColumnUtils::splitFilterDagForAllowedInputs(filter_actions_dag->getOutputs().at(0), &sample_block, query_context);
         if (table_filter_dag)
         {
             auto filter_expression = VirtualColumnUtils::buildFilterExpression(std::move(*table_filter_dag), query_context);
@@ -1441,7 +1441,7 @@ StorageMerge::DatabaseTablesIterators StorageMerge::DatabaseNameOrRegexp::getDat
     else
     {
         /// database_name argument is a regexp
-        auto databases = DatabaseCatalog::instance().getDatabases();
+        auto databases = DatabaseCatalog::instance().getDatabases(GetDatabasesOptions{.with_datalake_catalogs = true});
 
         for (const auto & db : databases)
         {
@@ -1593,7 +1593,8 @@ void ReadFromMerge::convertAndFilterSourceStream(
     auto convert_actions_dag = ActionsDAG::makeConvertingActions(
         current_step_columns,
         converted_columns,
-        ActionsDAG::MatchColumnsMode::Position);
+        ActionsDAG::MatchColumnsMode::Position,
+        local_context);
 
     auto expression_step = std::make_unique<ExpressionStep>(child.plan.getCurrentHeader(), std::move(convert_actions_dag));
     child.plan.addStep(std::move(expression_step));
