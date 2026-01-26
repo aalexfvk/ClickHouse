@@ -1,0 +1,31 @@
+on:
+  pull_request:
+    - workflows: [echo_workflow]
+
+workflows:
+  echo_workflow:  
+    tasks:
+      - name: my-task
+        # Здесь определяются переменные, которые будут доступны во всех кубиках 
+        # внутри задания my-task
+        env:
+          TASK_ENV_VAR: This variable is available in all cubes of this task.
+          # Многострочная переменная
+          MULTILINE_VAR: |
+            multi-var
+            multi-var
+            this is my multi-var
+        
+        cubes:
+          - name: hello
+            script:
+              - echo "Hello from SourceCraft CI ${WORKFLOW_VAR} $TASK_ENV_VAR"
+          - name: install_python
+            action: actions/setup-python@v6
+            with:
+              python-version: '3.13'
+          - name: FastTest
+            needs: ["install_python"]
+            script:
+              - python3 -m ci.praktika run "Fast test"
+              
