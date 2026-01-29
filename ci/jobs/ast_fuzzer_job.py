@@ -13,7 +13,8 @@ from ci.praktika.info import Info
 from ci.praktika.result import Result
 from ci.praktika.utils import Shell, Utils
 
-IMAGE_NAME = "clickhouse/fuzzer"
+IMAGE_NAME = "clickhouse/old_fuzzer"
+IMAGE2_NAME = "clickhouse/new_fuzzer"
 
 cwd = Utils.cwd()
 
