@@ -1,0 +1,193 @@
+on:
+  schedule:
+    - workflows: sync_upstream
+      cron: "0 9 * * *"
+      description: "every day at 9:00 AM"
+  
+
+workflows:
+  sync_upstream:
+    tasks:
+      - name: sync-upstream
+        cubes:
+          - name: sync-upstream
+            env:
+              GIT_SSL_NO_VERIFY: 1
+              CLICKHOUSE_UPSTREAM_REPO: https://github.com/ClickHouse/ClickHouse.git
+            script:
+              - |
+                set -ex
+                git remote add upstream ${CLICKHOUSE_UPSTREAM_REPO}
+                git fetch upstream --tags --quiet 2>&1 | grep -vE "multiple configurations|Skipping second one" || true
+                git push origin "refs/remotes/upstream/*:refs/heads/*" --force
+                git push origin --tags --force
+  
+
+  create_rebase_branch:
+    inputs:
+        target_branch:
+          description: 'Branch for rebasing (e.g. yc/master)'
+          required: true
+          default: 'yc/master'
+          type: string
+        upstream_tag:
+          description: 'Upstream tag to rebase onto (e.g. v25.12.5.6-stable)'
+          required: true
+          type: string
+
+    tasks:
+      - name: create-candidate
+        cubes:
+          - name: configure-git
+            script:
+              - |
+                set -ex
+                git config --global user.name 'CI Bot'
+                git config --global user.email 'cibot@example.com'
+          - name: validation-upstream-tag
+            script:
+              - |
+                if ! git rev-parse "${{ inputs.upstream_tag }}" >/dev/null 2>&1; then
+                  echo "::error::Tag ${{ inputs.upstream_tag }} not found in upstream."
+                  exit 1
+                fi
+          - name: detect-old-base
+            script:
+              - |
+                OLD_BASE=$(git describe --tags --abbrev=0 --match "v*" HEAD)
+                echo "Current base determined as: $OLD_BASE"
+
+                # Is already rebased
+                if [ "$OLD_BASE" == "${{ inputs.upstream_tag }}" ]; then
+                  echo "::error::Branch is already based on ${{ inputs.upstream_tag }}."
+                  exit 1
+                fi
+
+                # Is new tag ancestor of old base
+                if git merge-base --is-ancestor "${{ inputs.upstream_tag }}" HEAD; then
+                  echo "::warning::Tag ${{ inputs.upstream_tag }} is already merged into history."
+                  exit 1
+                fi
+
+                echo "old_base=$OLD_BASE" >> $SOURCECRAFT_ENV
+
+          - name: create-and-checkout-rebase-branch
+            script:
+              - |
+                SAFE_TAG=$(echo "${{ inputs.upstream_tag }}" | sed 's/[^a-zA-Z0-9.-]//g')
+                SAFE_TARGET=$(echo "${{ inputs.target_branch }}" | sed 's/\//-/g')
+
+                CANDIDATE_NAME="rebase/${SAFE_TARGET}/${SAFE_TAG}"
+                echo "candidate_name=$CANDIDATE_NAME" >> $SOURCECRAFT_ENV
+
+                git checkout -b $CANDIDATE_NAME          
+          - name: do-rebase
+            script:
+              - |                
+                $OLD_BASE=$old_base
+                $NEW_BASE="${{ inputs.upstream_tag }}"
+
+                if git rebase --onto $NEW_BASE $OLD_BASE HEAD; then
+                  echo "Rebase is done successfully."
+                else
+                  echo "::error::Rebase is failed due to conflicts."
+                  echo "::notice::Manual intervention required. Please rebase locally."
+                  git rebase --abort
+                  exit 1
+                fi
+          - name: reset-yc-version
+            script:
+              - |
+                NEW_VERSION="${{ inputs.upstream_tag }}-yc.1"
+                echo "Setting internal version to: $NEW_VERSION"
+
+                echo "$NEW_VERSION" > version_yc.txt
+                git add version_yc.txt
+                # --allow-empty just in case if version was not updated
+                git commit -m "Build: Reset version to $NEW_VERSION after rebase" --allow-empty
+          - name: push-rebase-branch
+            script:
+                - git push origin $candidate_name --force
+          - name: create-rebase-pr
+            script:
+              - |
+                curl -X POST \
+                  -H "Authorization: Bearer $SOURCECRAFT_TOKEN" \
+                  -H "Content-Type: application/json" \
+                  -d '{
+                    "source": ${candidate_name},
+                    "target": "${{ inputs.target_branch }}"},
+                    "title": "Rebase ${{ inputs.target_branch }} on ${{ inputs.upstream_tag }}",
+                    "description": "Rebase PR description"
+                  }' \
+                  "https://public-api.o.cloud.yandex.net/repos/yc/clickhouse/pull-requests"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  # build_workflow:
+  #   # runs_on: self-hosted
+  #   settings:git tag
+  #     max_cube_duration: 6h
+  #   tasks:
+  #     - name: my-task        
+  #       cubes:
+  #         - name: install-python
+  #           action: actions/setup-python@v6
+  #           with:
+  #             python-version: '3.13'         
+  #         - name: download-clickhouse-binary
+  #           needs: ["install-python"]
+  #           script:
+  #             - mkdir -p build
+  #             - echo "Downloading ClickHouse binary..."
+  #             - curl -L "${{ secrets.CLICKHOUSE_BINARY_S3_URL }}" -o build/clickhouse
+  #             - chmod +x build/clickhouse
+  #         - name: create-symlinks
+  #           needs: ["download-clickhouse-binary"]
+  #           script: 
+  #             - | 
+  #               cd build
+  #               ln -sf clickhouse clickhouse-server
+  #               ln -sf clickhouse clickhouse-client
+  #               ln -sf clickhouse clickhouse-local
+  #               ln -sf clickhouse clickhouse-benchmark
+  #               ln -sf clickhouse clickhouse-compressor
+  #               ln -sf clickhouse clickhouse-format
+  #               ln -sf clickhouse clickhouse-obfuscator
+  #               ln -sf clickhouse clickhouse-git-import
+  #               ln -sf clickhouse clickhouse-copier
+  #               ln -sf clickhouse clickhouse-keeper
+  #               ln -sf clickhouse clickhouse-keeper-client
+  #               ln -sf clickhouse clickhouse-disks
+  #               ln -sf clickhouse clickhouse-extract-from-config
+  #               ln -sf clickhouse ch
+          
+  #               ls -la
+  #         # - name: FastTest
+  #         #   needs: ["install_python"]
+  #         #   script:
+  #         #     - python3 -m ci.praktika run "Fast test"
+  #         # - name: Build release
+  #         #   needs: ["install_python"]
+  #         #   script:
+  #         #      - python3 -m ci.praktika run "Build (amd_release)"
+  #         - name: stateless-tests
+  #           needs: ["create-symlinks"]
+  #           script:
+  #             - python3 -m ci.praktika run "Stateless tests (amd_debug, distributed plan, s3 storage, parallel)" --path build
