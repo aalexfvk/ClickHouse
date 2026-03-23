@@ -15,7 +15,7 @@ cubes:
     script:
       - |
         set -ex
-        git clone --branch $SOURCECRAFT_COMMIT_REF  https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git .
+        git clone --branch $SOURCECRAFT_COMMIT_REF https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git .
   - name: checkout-shallow
     env:
       GIT_SSL_NO_VERIFY: 1
@@ -285,22 +285,6 @@ workflows:
                   exit 1
                 fi
 
-          - name: set-version
-            script:
-              - |
-                set -ex
-                TAG="${{ inputs.upstream_tag }}"
-                NEW_BRANCH="${{ inputs.new_branch_name }}"
-
-                # Initialize version: strip leading 'v', append -yc.1
-                # e.g. v25.12.1.1-stable → 25.12.1.1-stable-yc.1
-                INIT_VER="${TAG#v}-yc.1"
-                echo "Initializing version_yc.txt to: $INIT_VER"
-
-                echo "$INIT_VER" > version_yc.txt
-                git add version_yc.txt
-                git commit -m "Init: Set version to $INIT_VER for branch $NEW_BRANCH"
-
           - name: push-release-branch
             script:
               - |
@@ -363,52 +347,52 @@ workflows:
 
                 echo "target_branch=$SOURCE_BRANCH" >> $SOURCECRAFT_ENV
 
-          - name: read-version
+          - name: compute-version
             script:
               - |
-                if [ ! -f "version_yc.txt" ]; then
-                  echo "::error::version_yc.txt missing!"
-                  exit 1
+                set -ex
+
+                # Find the latest upstream tag reachable from HEAD (e.g. v25.12.7.21-stable).
+                # Our own tags have no leading 'v', so --match "v*" skips them.
+                UPSTREAM_TAG=$(git describe --tags --abbrev=0 --match "v*" HEAD)
+                # Strip leading 'v': v25.12.7.21-stable → 25.12.7.21-stable
+                UPSTREAM_VER="${UPSTREAM_TAG#v}"
+
+                # Find the latest our yc tag reachable from HEAD (e.g. 25.12.7.21-stable-yc.2).
+                # If none exists yet — this is the first release on this upstream base.
+                LAST_YC_TAG=$(git describe --tags --abbrev=0 --match "*-yc.*" HEAD 2>/dev/null || true)
+
+                if [ -n "$LAST_YC_TAG" ] && [[ "$LAST_YC_TAG" == "${UPSTREAM_VER}-yc."* ]]; then
+                  # Same upstream base — increment the yc counter
+                  LAST_NUM="${LAST_YC_TAG##*-yc.}"
+                  NEXT_NUM=$((LAST_NUM + 1))
+                else
+                  # New upstream base or no yc tags yet — start from 1
+                  NEXT_NUM=1
                 fi
 
-                RELEASE_VER=$(cat version_yc.txt | tr -d '\n')
+                RELEASE_VER="${UPSTREAM_VER}-yc.${NEXT_NUM}"
 
                 if git rev-parse "$RELEASE_VER" >/dev/null 2>&1; then
-                  echo "::error::Tag $RELEASE_VER already exists. Bump version first."
+                  echo "::error::Tag $RELEASE_VER already exists (race condition?). Re-run the workflow."
                   exit 1
                 fi
 
-                echo "Releasing: $RELEASE_VER"
+                echo "Computed release version: $RELEASE_VER"
                 echo "ver=$RELEASE_VER" >> $SOURCECRAFT_ENV
-          
-                # Save commit SHA for the tag
+
                 SHA=$(git rev-parse HEAD)
                 echo "sha=$SHA" >> $SOURCECRAFT_ENV
 
           - name: finalize
             script:
               - |
+                set -ex
                 echo "---- Tagging release ----"
                 git tag -a "$ver" -m "Release $ver" "$sha"
-                git push origin $ver
+                git push origin "$ver"
 
-                # Parse version
-                SUFFIX="${ver##*-yc.}"
-                PREFIX="${ver%-yc.*}"
-
-                NEXT_NUM=$((SUFFIX + 1))
-                NEXT_VER="${PREFIX}-yc.${NEXT_NUM}"
-
-                echo "Bumping to $NEXT_VER"
-                echo "$NEXT_VER" > version_yc.txt
-
-                git add version_yc.txt
-
-                git commit -m "Bump version to $NEXT_VER"
-
-                git push origin HEAD:refs/heads/$target_branch
-          
-                echo "✅ Release $ver published. Branch ready for $NEXT_VER."
+                echo "✅ Release $ver published."
 
 
   apply_rebase_candidate:
@@ -589,25 +573,6 @@ workflows:
                   git rebase --abort
                   exit 1
                 fi
-          - name: reset-yc-version
-            script:
-              - |
-                set -ex
-
-                if [ "$skip_rebase" == "true" ]; then
-                   exit 0
-                fi
-
-                # Strip leading 'v' to match the format used in version_yc.txt
-                # e.g. v25.12.5.6-stable → 25.12.5.6-stable-yc.1
-                TAG="${{ inputs.upstream_tag }}"
-                NEW_VERSION="${TAG#v}-yc.1"
-                echo "Setting internal version to: $NEW_VERSION"
-
-                echo "$NEW_VERSION" > version_yc.txt
-                git add version_yc.txt
-                # --allow-empty just in case if version was not changed
-                git commit -m "Build: Reset version to $NEW_VERSION after rebase" --allow-empty
           - name: push-rebase-branch
             script:
                 - |
