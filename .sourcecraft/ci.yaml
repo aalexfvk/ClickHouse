@@ -1,0 +1,892 @@
+env:
+  CLICKHOUSE_UPSTREAM_REPO_URL: https://github.com/ClickHouse/ClickHouse.git
+  SOURCECRAFT_API_BASE: https://public-api.o.cloud.yandex.net
+  SOURCECRAFT_ORG_SLUG: yc
+  SOURCECRAFT_REPO_SLUG: clickhouse
+
+on:
+  schedule:
+    - workflows: upstream_sync
+      cron: "0 8 * * *"
+      description: "every day at 9:00 AM"
+    - workflows: auto_rebase_check
+      cron: "30 8 * * *"
+      description: "auto rebase check, runs 30 min after upstream_sync"
+
+  pull_request:
+    - workflows: [tests_workflow]
+      filter:
+        target_branches: ["yc/master"]
+    - workflows: [tests_workflow]
+      filter:
+        source_branches: "yc/rebase/**"
+        target_branches: ["yc/**"]
+    - workflows: [tests_workflow]
+      filter:
+        source_branches: ["yc/backport/**"]
+        target_branches: ["yc/**"]
+
+  push:
+    - workflows: [teamcity_build]
+      filter:
+        tags: "*-yc.*"
+
+cubes:
+  - name: configure-git
+    script:
+      - |
+        git config --global user.name 'CI Bot'
+        git config --global user.email 'cibot@example.com'
+        echo "CLICKHOUSE_REPO_URL=https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git" >> $SOURCECRAFT_ENV
+  # - name: checkout
+  #   env:
+  #     GIT_SSL_NO_VERIFY: 1
+  #   script:
+  #     - |
+  #       set -ex
+  #       git clone --branch $SOURCECRAFT_COMMIT_REF_NAME $CLICKHOUSE_REPO_URL .
+  #       git fetch --tags --quiet
+  - name: checkout-with-cache
+    env:
+      GIT_SSL_NO_VERIFY: 1
+      GIT_MIRROR_PATH: /cache/clickhouse.git
+    script:
+      - |
+        set -ex
+        MIRROR="$GIT_MIRROR_PATH"
+
+        # Update or create the bare mirror of the internal fork.
+        # flock prevents race conditions when multiple jobs run in parallel on the same worker.
+        # The entire subshell is guarded with || true so a mirror failure does not abort the build.
+        mkdir -p "$(dirname "$MIRROR")"
+        (
+          flock 200
+          if [ -d "$MIRROR" ]; then
+            git -C "$MIRROR" remote set-url origin "$CLICKHOUSE_REPO_URL" || true
+            git -C "$MIRROR" remote update --prune || true
+          else
+            git clone --mirror "$CLICKHOUSE_REPO_URL" "$MIRROR" || true
+          fi
+        ) 200>"${MIRROR}.lock" || true
+
+        # Clone via reference if the mirror is ready; fall back to a plain clone otherwise.
+        if [ -d "$MIRROR/objects" ]; then
+          git clone \
+            --reference "$MIRROR" \
+            --branch "$SOURCECRAFT_COMMIT_REF_NAME" \
+            "$CLICKHOUSE_REPO_URL" .
+        else
+          git clone --branch "$SOURCECRAFT_COMMIT_REF_NAME" "$CLICKHOUSE_REPO_URL" .
+        fi
+
+        # Fetch tags from the local mirror first (no network); fall back to remote if unavailable.
+        git fetch --tags --quiet "$MIRROR" 2>/dev/null || git fetch --tags --quiet
+
+  - name: checkout-shallow
+    env:
+      GIT_SSL_NO_VERIFY: 1
+    script:
+      - |
+        set -ex
+        git clone --branch $SOURCECRAFT_COMMIT_REF_NAME --depth=1 $CLICKHOUSE_REPO_URL .
+
+
+  # Restores .sourcecraft/ from yc/master into the current working directory.
+  # Use this after checking out a release branch (yc/XX.YY) that does not contain .sourcecraft/.
+  - name: restore-sourcecraft
+    env:
+      GIT_SSL_NO_VERIFY: 1
+    script:
+      - |
+        set -ex
+        git fetch origin yc/master:refs/remotes/origin/yc/master
+        git checkout origin/yc/master -- .sourcecraft
+
+  # Parameterized cube for downloading a pre-built binary from S3.
+  # Override BUILD_TYPE (e.g. amd_debug, amd_binary, amd_release) when using.
+  - name: download-binary
+    env:
+      BUILD_TYPE: ${{ env.BUILD_TYPE }}
+    script:
+      - s3cmd --config /etc/s3cmd/bucket.conf get s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/$BUILD_TYPE/clickhouse
+
+  - name: setup-sccache
+    script:
+      - |
+        set -ex
+        # Clean up any existing local.env for idempotency
+        rm -f ci/local.env
+
+        # Parse S3 credentials from s3cmd config for sccache
+        S3_CONF="/etc/s3cmd/bucket.conf"
+        if [ ! -f "$S3_CONF" ]; then
+          echo "WARNING: $S3_CONF not found, sccache S3 backend will not be configured"
+          exit 0
+        fi
+
+        # Disable xtrace to avoid printing secrets into logs
+        { set +x; } 2>/dev/null
+        S3_ACCESS_KEY=$(grep -E '^\s*access_key\s*=' "$S3_CONF" | head -1 | sed 's/.*=\s*//')
+        S3_SECRET_KEY=$(grep -E '^\s*secret_key\s*=' "$S3_CONF" | head -1 | sed 's/.*=\s*//')
+        S3_HOST_BASE=$(grep -E '^\s*host_base\s*=' "$S3_CONF" | head -1 | sed 's/.*=\s*//')
+        
+        # Write sccache environment variables to ci/local.env for Docker --env-file.
+        # These variables are read by Runner._load_local_env() and passed into Docker.
+        # SCCACHE_BUCKET, SCCACHE_S3_KEY_PREFIX, SCCACHE_IDLE_TIMEOUT are set by build_clickhouse.py.
+        # SCCACHE_BASEDIR is set here to normalize paths for stable cache keys.
+        mkdir -p ci
+        printf '%s\n' \
+          "AWS_ACCESS_KEY_ID=$S3_ACCESS_KEY" \
+          "AWS_SECRET_ACCESS_KEY=$S3_SECRET_KEY" \
+          "SCCACHE_ENDPOINT=$S3_HOST_BASE" \
+          "SCCACHE_REGION=ru-central1" \
+          "SCCACHE_S3_USE_SSL=true" \
+          "SCCACHE_BASEDIR=$PWD" \
+          "AWS_DEFAULT_REGION=ru-central1" \
+          > ci/local.env
+        set -x
+
+  # Parameterized cube for building and uploading a binary.
+  # Override BUILD_TYPE (e.g. amd_debug, amd_binary) when using.
+  # The praktika job name is derived as "Build ($BUILD_TYPE)".
+  - name: build-and-upload
+    env:
+      BUILD_TYPE: ${{ env.BUILD_TYPE }}
+      CLICKHOUSE_BINARY_PATH: ci/tmp/build/programs/self-extracting/clickhouse
+    script:
+      - |
+        python3 -m ci.praktika run "Build ($BUILD_TYPE)"
+        ls ci/tmp/build/programs/
+      - s3cmd --config /etc/s3cmd/bucket.conf put $CLICKHOUSE_BINARY_PATH s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/$BUILD_TYPE/clickhouse
+      - ls -lah
+
+  # Upload sccache log after build for diagnostics.
+  # Override BUILD_TYPE via env when using.
+  - name: upload-sccache-log
+    env:
+      BUILD_TYPE: ${{ env.BUILD_TYPE }}
+    script:
+      - |
+        s3cmd --config /etc/s3cmd/bucket.conf put \
+          ci/tmp/build/sccache.log \
+          s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/$BUILD_TYPE/sccache.log || true
+
+  # Parameterized cube for running one integration test batch.
+  # Override INTEGRATION_BATCH when using.
+  - name: run-integration-test
+    env:
+      INTEGRATION_BATCH: ${{ env.INTEGRATION_BATCH }}
+    script:
+      - bash .sourcecraft/scripts/run_integration_test.sh $INTEGRATION_BATCH
+
+  # Parameterized cube for running a stateless test suite.
+  # Override STATELESS_TEST_NAME when using.
+  - name: run-stateless-test
+    env:
+      STATELESS_TEST_NAME: ${{ env.STATELESS_TEST_NAME }}
+    script:
+      - python3 -m ci.praktika run "$STATELESS_TEST_NAME"
+  
+  # Reusable cube for printing system information on self-hosted runners.
+  - name: print-system-info
+    script:
+      - |
+        set -ex
+        echo "=== System Information ==="
+        echo "Hostname: $(hostname)"
+        echo "=== Disk Usage ==="
+        df -h || true
+        echo "=== Memory ==="
+        free -h || true
+        echo "=== CPU ==="
+        nproc
+        if command -v lscpu >/dev/null 2>&1; then
+          lscpu || true
+        fi
+        echo "=== System Information Complete ==="
+
+# Reusable task templates.
+tasks:
+  # Template for build tasks. Override BUILD_TYPE via env when referencing with uses.
+  - name: build-task
+    env:
+      GIT_SSL_NO_VERIFY: 1
+      BUILD_TYPE: "Unknown"
+    cubes:
+      - name: print-system-info
+        uses: print-system-info
+      - name: configure-git
+        uses: configure-git
+      - name: checkout
+        uses: checkout-shallow
+      - name: setup-sccache
+        uses: setup-sccache
+      - name: build-and-upload
+        uses: build-and-upload
+      - name: upload-sccache-log
+        uses: upload-sccache-log
+
+  # Template for stateless test tasks. Override STATELESS_TEST_NAME via env when referencing with uses.
+  - name: stateless-test
+    env:
+      GIT_SSL_NO_VERIFY: 1
+      BUILD_TYPE: amd_debug
+      STATELESS_TEST_NAME: "Unknown"
+    cubes:
+      - name: print-system-info
+        uses: print-system-info
+      - name: configure-git
+        uses: configure-git
+      - name: checkout
+        uses: checkout-shallow
+      - name: download-binary
+        uses: download-binary
+      - name: run
+        uses: run-stateless-test
+
+  # Template for integration test batches. Override INTEGRATION_BATCH via env when referencing with uses.
+  - name: integration-test-batch
+    env:
+      GIT_SSL_NO_VERIFY: 1
+      TEST_SESSION_TIMEOUT: 10800
+      BUILD_TYPE: amd_binary
+      INTEGRATION_BATCH: "Unknown"
+    cubes:
+      - name: print-system-info
+        uses: print-system-info
+      - name: configure-git
+        uses: configure-git
+      - name: checkout
+        uses: checkout-shallow
+      - name: download-binary
+        uses: download-binary
+      - name: run
+        uses: run-integration-test
+
+workflows:
+  dummy:
+    tasks:
+      - name: dummy
+        cubes:
+          - name: dummy
+            env:
+              GIT_SSL_NO_VERIFY: 1
+            script:
+              - echo "Current_dir $(pwd)"
+              - bash ls -lah
+
+  upstream_sync:
+    tasks:
+      - name: upstream-sync
+        cubes:
+          - name: upstream-sync
+            env:
+              GIT_SSL_NO_VERIFY: 1
+            script:
+              - bash .sourcecraft/scripts/sync_upstream.sh
+
+
+  backport:
+    inputs:
+      target_branch:
+        description: 'Target Release Branch (e.g. yc/25.12)'
+        required: true
+        type: string
+      commit_sha:
+        description: 'Commit SHA from yc/master to cherry-pick'
+        required: true
+        type: string
+      # original_pr:
+      #   description: 'Original PR Number (for naming only)'
+      #   required: false
+      #   default: 'manual'
+      #   type: string
+    
+    tasks:
+      - name: backport
+        checkout:
+          enabled: false
+        env:
+          GIT_SSL_NO_VERIFY: 1
+        cubes:
+          - name: configure-git
+            uses: configure-git
+          
+          - name: checkout
+            uses: checkout-with-cache
+
+          - name: prepare-branch
+            script:
+              - bash .sourcecraft/scripts/backport_prepare_branch.sh "${{ inputs.target_branch }}" "${{ inputs.commit_sha }}"
+
+          # Restore .sourcecraft/ from yc/master — release branches do not contain it.
+          # Uses 'git checkout origin/yc/master -- .sourcecraft' which only extracts
+          # files into the working tree without changing HEAD or the active branch.
+          - name: restore-sourcecraft
+            uses: restore-sourcecraft
+
+          - name: cherry-pick
+            script:
+              - bash .sourcecraft/scripts/backport_cherry_pick.sh "${{ inputs.commit_sha }}"
+          - name: push
+            script:
+              - |
+                set -ex
+                BP_BRANCH="$bp_branch"
+                echo "Pushing $BP_BRANCH..."
+                git push origin "$BP_BRANCH" --force
+
+          - name: create-backport-pr
+            script:
+              - bash .sourcecraft/scripts/backport_create_pr.sh "${{ inputs.target_branch }}" "${{ inputs.commit_sha }}"
+
+
+
+  init_release_branch:
+    inputs:
+      upstream_tag:
+        description: 'Upstream tag to base the new branch on (e.g. v25.12.1.1-stable)'
+        required: true
+        type: string
+      new_branch_name:
+        description: 'Name of the new YC release branch (e.g. yc/25.12). Auto-generated from upstream_tag if not set.'
+        required: false
+        type: string
+        default: ''
+      apply_patches:
+        description: 'Apply YC patches from yc/master onto the new branch (true) or create a clean branch at the tag (false)'
+        required: false
+        default: 'true'
+        options: ['true', 'false']
+
+    tasks:
+      - name: init-branch
+        checkout:
+          enabled: false
+        env:
+          GIT_SSL_NO_VERIFY: 1
+        cubes:
+          - name: configure-git
+            uses: configure-git
+          - name: checkout
+            uses: checkout-with-cache
+          - name: checkout-target
+            script:
+              - |
+                set -ex
+                if [ "${{ inputs.apply_patches }}" == "true" ]; then
+                  git checkout $SOURCECRAFT_COMMIT_REF
+                else
+                  git checkout "${{ inputs.upstream_tag }}"
+                fi
+
+          - name: restore-sourcecraft
+            uses: restore-sourcecraft
+
+          - name: validate-inputs
+            script:
+              - bash .sourcecraft/scripts/init_release_branch_validate.sh "${{ inputs.upstream_tag }}" "${{ inputs.new_branch_name }}"
+
+          - name: detect-patch-base
+            script:
+              - |
+                if [ "${{ inputs.apply_patches }}" == "true" ]; then
+                  bash .sourcecraft/scripts/init_release_branch_detect_base.sh
+                else
+                  # No patches — old_base is not needed
+                  echo "old_base=none" >> $SOURCECRAFT_ENV
+                fi
+
+          - name: create-release-branch
+            script:
+              - bash .sourcecraft/scripts/init_release_branch_create.sh "${{ inputs.upstream_tag }}" "${{ inputs.apply_patches }}"
+
+          - name: push-release-branch
+            script:
+              - |
+                set -ex
+                NEW_BRANCH="$new_branch"
+
+                git push origin "HEAD:refs/heads/$NEW_BRANCH"
+                echo "✅ Release branch $NEW_BRANCH created successfully."
+                echo "   Next step: run create_release to tag and publish a release."
+
+
+  create_release:
+    inputs:
+      source_branch:
+        description: 'Release branch to tag (e.g. yc/25.12). Create it first with init_release_branch.'
+        required: true
+        type: string
+      tag_name:
+        description: 'Tag name to use for the release (e.g. 25.12.7.21-yc.3). Auto-computed from the branch if not set.'
+        required: false
+        type: string
+        default: ''
+    
+    tasks:
+      - name: release
+        checkout:
+          enabled: false
+        env:
+          GIT_SSL_NO_VERIFY: 1
+        cubes:
+          - name: configure-git
+            uses: configure-git
+          
+          - name: checkout
+            script:
+              - |
+                set -ex
+                SOURCE_BRANCH="${{ inputs.source_branch }}"
+                git clone --branch "$SOURCE_BRANCH" --single-branch $CLICKHOUSE_REPO_URL .
+                # Fetch tags so that read-version can check if the tag already exists
+                git fetch --tags
+
+          - name: restore-sourcecraft
+            uses: restore-sourcecraft
+
+          - name: validate-branch
+            script:
+              - bash .sourcecraft/scripts/create_release_validate.sh "${{ inputs.source_branch }}"
+
+          - name: compute-version
+            script:
+              - |
+                set -ex
+                TAG_NAME="${{ inputs.tag_name }}"
+                if [ -n "$TAG_NAME" ]; then
+                  echo "ver=$TAG_NAME" >> $SOURCECRAFT_ENV
+                  echo "sha=$(git rev-parse HEAD)" >> $SOURCECRAFT_ENV
+                else
+                  bash .sourcecraft/scripts/create_release_compute_version.sh
+                fi
+
+          - name: finalize
+            script:
+              - |
+                set -ex
+                echo "---- Tagging release ----"
+                git tag -a "$ver" -m "Release $ver" "$sha"
+                git push origin "$ver"
+
+                echo "✅ Release $ver published."
+
+
+  apply_rebase_candidate:
+    inputs:
+        candidate_branch:
+          description: 'Ready branch (e.g. yc/rebase/master/v26...)'
+          required: true
+          type: string
+        target_branch:
+          description: 'Target branch to overwrite (e.g. yc/master)'
+          required: true
+          default: 'yc/master'
+          type: string
+        pr_number:
+          description: 'PR number to close (optional)'
+          required: false
+          type: string
+
+    tasks:
+      - name: replace-branch
+        checkout:
+          enabled: false
+        env:
+          GIT_SSL_NO_VERIFY: 1
+        cubes:
+          - name: configure-git
+            uses: configure-git
+
+          - name: checkout
+            uses: checkout-with-cache
+
+          - name: validate-and-replace
+            script:
+              - bash .sourcecraft/scripts/apply_rebase_candidate.sh "${{ inputs.candidate_branch }}" "${{ inputs.target_branch }}" "${{ inputs.pr_number }}"
+
+  create_rebase_pr:
+    inputs:
+        target_branch:
+          description: 'Branch for rebasing (e.g. yc/master or yc/25.12)'
+          required: true
+          default: 'yc/master'
+          type: string
+        upstream_tag:
+          description: 'Upstream tag to rebase onto (e.g. v25.12.5.6-stable)'
+          required: true
+          type: string
+        force_update:
+          description: 'Force recreate the candidate branch even if it exists'
+          required: false
+          default: 'false'
+          type: string
+
+    tasks:
+      - name: create-candidate
+        checkout:
+          enabled: false
+        env:
+          GIT_SSL_NO_VERIFY: 1
+          SOURCECRAFT_COMMIT_REF_NAME: ${{ inputs.target_branch }}
+        cubes:
+          - name: configure-git
+            uses: configure-git
+
+          - name: checkout
+            uses: checkout-with-cache
+
+          - name: restore-sourcecraft
+            uses: restore-sourcecraft
+
+          - name: validation-upstream-tag
+            script:
+              - |
+                set -ex
+                if ! git rev-parse "${{ inputs.upstream_tag }}" >/dev/null 2>&1; then
+                  echo "::error::Tag ${{ inputs.upstream_tag }} not found. Run sync_upstream first."
+                  exit 1
+                fi
+          - name: detect-old-base
+            script:
+              - bash .sourcecraft/scripts/create_rebase_pr_detect_old_base.sh "${{ inputs.upstream_tag }}"
+
+          - name: check-if-candidate-exist
+            script:
+              - bash .sourcecraft/scripts/create_rebase_pr_check_candidate.sh "${{ inputs.upstream_tag }}" "${{ inputs.target_branch }}" "${{ inputs.force_update }}"
+
+          - name: checkout-candidate
+            script:
+              - |
+                set -ex
+                if [ "$skip_rebase" == "true" ]; then
+                   git checkout -b "$candidate_name" "origin/$candidate_name"
+                else
+                   git checkout -B "$candidate_name"
+                fi
+          - name: do-rebase
+            script:
+              - |
+                set -ex
+                if [ "$skip_rebase" == "true" ]; then
+                   exit 0
+                fi
+
+                if git rebase --onto "${{ inputs.upstream_tag }}" "$old_base" "$candidate_name"; then
+                  echo "Rebase is done successfully."
+                else
+                  echo "::error::Rebase failed due to conflicts."
+                  git rebase --abort
+                  exit 1
+                fi
+          - name: push-rebase-branch
+            script:
+                - |
+                  set -ex
+                  if [ "$skip_rebase" == "true" ]; then
+                    exit 0
+                  fi
+                  git push origin "$candidate_name" --force
+          - name: create-rebase-pr
+            script:
+              - bash .sourcecraft/scripts/create_rebase_pr_create_pr.sh "${{ inputs.target_branch }}" "${{ inputs.upstream_tag }}"
+
+  auto_rebase_check:
+    inputs:
+      target_branch:
+        description: 'Branch to rebase (e.g. yc/master, yc/25.12) or "all" for all yc/* branches'
+        required: false
+        default: 'all'
+        type: string
+      create_pr:
+        description: 'Create candidate branch and PR (true = full rebase + PR, false = dry-run check only)'
+        required: false
+        default: 'false'
+        options: ['false', 'true']
+
+    tasks:
+      - name: rebase-check
+        checkout:
+          enabled: false
+        env:
+          GIT_SSL_NO_VERIFY: 1
+          INPUT_BRANCH: ${{ inputs.target_branch }}
+          CREATE_PR: ${{ inputs.create_pr }}
+        cubes:
+          - name: configure-git
+            uses: configure-git
+
+          - name: checkout
+            uses: checkout-with-cache
+
+          - name: run-rebase-loop
+            script:
+              - python3 .sourcecraft/scripts/auto_rebase_check.py
+
+  do_rebase_poller:
+    tasks:
+      - name: poll-and-apply
+        checkout:
+          enabled: false
+        env:
+          GIT_SSL_NO_VERIFY: 1
+          API_BASE: https://public-api.o.cloud.yandex.net
+          ORG_SLUG: yc
+          REPO_SLUG: clickhouse
+          REBASE_LABEL: do-rebase
+        cubes:
+          - name: configure-git
+            uses: configure-git
+          - name: checkout
+            uses: checkout-with-cache
+
+          - name: run-poller
+            script:
+              - python3 .sourcecraft/scripts/do_rebase_poller.py
+
+  publish_release:
+    runs_on: [self-hosted, ultrasmall]
+    inputs:
+      release_tag:
+        description: 'Tag name for the release (e.g. 25.12.7.21-stable-yc.3). Must already exist in the repository.'
+        required: true
+        type: string
+    tasks:
+      - name: publish-release
+        checkout:
+          enabled: false
+        env:
+          GIT_SSL_NO_VERIFY: 1
+          SOURCECRAFT_RELEASE_TAG: ${{ inputs.release_tag }}
+          # checkout-with-cache uses SOURCECRAFT_COMMIT_REF_NAME to clone the repo.
+          # Pass the release tag so it clones at the correct commit.
+          SOURCECRAFT_COMMIT_REF_NAME: ${{ inputs.release_tag }}
+        cubes:
+          - name: configure-git
+            uses: configure-git
+          - name: checkout
+            uses: checkout-with-cache
+          - name: restore-sourcecraft
+            uses: restore-sourcecraft
+          - name: publish-release
+            script:
+              - python3 .sourcecraft/scripts/publish_release.py
+
+  teamcity_build:
+    runs_on: [self-hosted, ultrasmall]
+    settings:
+      max_cube_duration: 6h
+    tasks:
+      - name: run-teamcity-build
+        checkout:
+          enabled: false
+        env:
+          GIT_SSL_NO_VERIFY: 1
+          TEAMCITY_URL: https://teamcity.aw.cloud.yandex.net
+          TEAMCITY_BUILD_TYPE_ID: MDB_ClickHouse_ClickHouseBuild
+          TEAMCITY_TOKEN: ${{ secrets.TEAMCITY_TOKEN }}
+          # The tag name is set by SourceCraft when the workflow is triggered by a tag push.
+          SOURCECRAFT_RELEASE_TAG: ${{ env.SOURCECRAFT_COMMIT_REF_NAME }}
+        cubes:
+          - name: configure-git
+            uses: configure-git
+          # Clone the repo at the release tag and fetch all tags so that
+          # git describe can walk history back to the upstream v* tag for
+          # release notes generation in publish_release.py.
+          - name: checkout
+            uses: checkout-with-cache
+          - name: restore-sourcecraft
+            uses: restore-sourcecraft
+          - name: run-teamcity-build
+            script:
+              - python3 .sourcecraft/scripts/run_teamcity_build.py
+          - name: publish-release
+            script:
+              - python3 .sourcecraft/scripts/publish_release.py
+
+  fast_test_workflow:
+    runs_on: ["self-hosted", "!ultrasmall"]
+    settings:
+      max_cube_duration: 6h
+    tasks:
+      - name: fast_test
+        checkout:
+          enabled: false
+        env:
+          GIT_SSL_NO_VERIFY: 1
+        cubes:
+          - name: configure-git
+            uses: configure-git          
+          - name: checkout
+            uses: checkout-with-cache          
+          - name: setup-sccache
+            uses: setup-sccache
+          - name: fast_test
+            script:
+              - python3 -m ci.praktika run "Fast test"
+
+  tests_workflow:
+    runs_on: ["self-hosted", "!ultrasmall"]
+    settings:
+      max_cube_duration: 6h
+    tasks:
+      - name: style-check
+        checkout:
+          enabled: false
+        env:
+          GIT_SSL_NO_VERIFY: 1
+        cubes:
+          - name: configure-git
+            uses: configure-git
+          - name: checkout
+            uses: checkout-shallow
+          - name: style-check
+            script:
+              - python3 -m ci.praktika run "Style check"
+
+      - name: build_amd_debug
+        runs_on: [self-hosted, large]
+        uses: build-task
+        needs: [style-check]
+        checkout:
+          enabled: false
+        env:
+          BUILD_TYPE: amd_debug
+
+      - name: build_llvm_coverage
+        runs_on: [self-hosted, large]
+        uses: build-task
+        needs: [style-check]
+        checkout:
+          enabled: false
+        env:
+          BUILD_TYPE: llvm_coverage_build
+
+      - name: stateless-tests-debug-distributed-plan-s3-parallel
+        uses: stateless-test
+        needs: [build_amd_debug]
+        checkout:
+          enabled: false
+        env:
+          STATELESS_TEST_NAME: "Stateless tests (amd_debug, distributed plan, s3 storage, parallel)"
+
+      - name: stateless-tests-debug-distributed-plan-s3-sequential
+        uses: stateless-test
+        needs: [build_amd_debug]
+        checkout:
+          enabled: false
+        env:
+          STATELESS_TEST_NAME: "Stateless tests (amd_debug, distributed plan, s3 storage, sequential)"
+
+      - name: stateless-tests-llvm-async-insert-s3-parallel
+        uses: stateless-test
+        needs: [build_llvm_coverage]
+        checkout:
+          enabled: false
+        env:
+          BUILD_TYPE: llvm_coverage_build
+          STATELESS_TEST_NAME: "Stateless tests (amd_llvm_coverage, AsyncInsert, s3 storage, parallel)"
+
+      - name: stateless-tests-llvm-async-insert-s3-sequential
+        uses: stateless-test
+        needs: [build_llvm_coverage]
+        checkout:
+          enabled: false
+        env:
+          BUILD_TYPE: llvm_coverage_build
+          STATELESS_TEST_NAME: "Stateless tests (amd_llvm_coverage, AsyncInsert, s3 storage, sequential)"
+
+      - name: stateless-tests-debug-parallel
+        uses: stateless-test
+        needs: [build_amd_debug]
+        checkout:
+          enabled: false
+        env:
+          STATELESS_TEST_NAME: "Stateless tests (amd_debug, parallel)"
+
+      # Reason: Fails on azure_cache related tests, because azurit is not started for local tests
+      # - name: stateless-tests-debug-sequential
+      #   uses: stateless-test
+      #   needs: [build_amd_debug]
+      #   env:
+      #     STATELESS_TEST_NAME: "Stateless tests (amd_debug, sequential)"
+
+      - name: integration-tests-1
+        runs_on: [self-hosted, medium]
+        uses: integration-test-batch
+        needs: [build_llvm_coverage]
+        checkout:
+          enabled: false
+        env:
+          BUILD_TYPE: llvm_coverage_build
+          INTEGRATION_BATCH: 1
+
+      - name: integration-tests-2
+        runs_on: [self-hosted, medium]
+        uses: integration-test-batch
+        needs: [build_llvm_coverage]
+        checkout:
+          enabled: false
+        env:
+          BUILD_TYPE: llvm_coverage_build
+          INTEGRATION_BATCH: 2
+
+      - name: integration-tests-3
+        runs_on: [self-hosted, medium]
+        uses: integration-test-batch
+        needs: [build_llvm_coverage]
+        checkout:
+          enabled: false
+        env:
+          BUILD_TYPE: llvm_coverage_build
+          INTEGRATION_BATCH: 3
+
+      - name: integration-tests-4
+        runs_on: [self-hosted, medium]
+        uses: integration-test-batch
+        needs: [build_llvm_coverage]
+        checkout:
+          enabled: false
+        env:
+          BUILD_TYPE: llvm_coverage_build
+          INTEGRATION_BATCH: 4
+
+      - name: integration-tests-5
+        runs_on: [self-hosted, medium]
+        uses: integration-test-batch
+        needs: [build_llvm_coverage]
+        checkout:
+          enabled: false
+        env:
+          BUILD_TYPE: llvm_coverage_build
+          INTEGRATION_BATCH: 5
+
+  test_checkout_cache:
+    runs_on: [self-hosted, ultrasmall]
+    inputs:
+      branch:
+        description: 'Branch to check out (e.g. yc/master, yc/25.8)'
+        required: true
+        type: string
+        default: 'yc/master'
+
+    tasks:
+      - name: test-checkout-cache
+        checkout:
+          enabled: false
+        env:
+          GIT_SSL_NO_VERIFY: 1
+          SOURCECRAFT_COMMIT_REF_NAME: ${{ inputs.branch }}
+        cubes:
+          - name: configure-git
+            uses: configure-git
+
+          - name: checkout
+            uses: checkout-with-cache
+
+          - name: describe
+            script:
+              - |
+                set -ex
+                git describe --tags --match 'v*' --abbrev=0
