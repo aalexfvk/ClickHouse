@@ -1,4 +1,9 @@
 cubes:
+  - name: test-cube-1
+    script:
+      - |
+        git config --global user.name 'CI Bot'
+        git config --global user.email 'cibot@example.com'
   - name: configure-git
     script:
       - |
@@ -10,16 +15,14 @@ cubes:
     script:
       - |
         set -ex
-        git clone --branch yc/master https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git .
-        git checkout $SOURCECRAFT_COMMIT_REF
+        git clone --branch $SOURCECRAFT_COMMIT_REF  https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git .
   - name: checkout-shallow
     env:
       GIT_SSL_NO_VERIFY: 1
     script:
       - |
         set -ex
-        git clone --branch yc/master --depth=1 https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git .
-        git checkout $SOURCECRAFT_COMMIT_REF
+        git clone --branch $SOURCECRAFT_COMMIT_REF --depth=1 https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git .
   - name: download-binary
     script:
       - s3cmd --config /etc/s3cmd/bucket.conf get s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/clickhouse
@@ -117,11 +120,7 @@ workflows:
                 git config --global user.email 'cibot@example.com'
           
           - name: checkout
-            script:
-              - |
-                set -ex
-                git clone --branch yc/master https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git .
-                git checkout $SOURCECRAFT_COMMIT_REF
+            uses: checkout
 
           - name: prepare-branch
             script:
@@ -691,7 +690,7 @@ workflows:
       max_cube_duration: 6h
     tasks:
       - name: build
-        runs_on: [large]
+        runs_on: [self-hosted, large]
         checkout:
           enabled: false
         env:
