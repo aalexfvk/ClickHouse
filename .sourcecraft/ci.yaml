@@ -204,8 +204,8 @@ workflows:
         required: true
         type: string
       new_branch_name:
-        description: 'Name of the new YC release branch (e.g. yc/25.12)'
-        required: true
+        description: 'Name of the new YC release branch (e.g. yc/25.12). Auto-generated from upstream_tag if not set.'
+        required: false
         type: string
 
     tasks:
@@ -234,7 +234,18 @@ workflows:
               - |
                 set -ex
                 TAG="${{ inputs.upstream_tag }}"
-                NEW_BRANCH="${{ inputs.new_branch_name }}"
+
+                # Auto-generate branch name from tag if not provided:
+                # v25.12.6.38-stable → yc/25.12
+                if [ -n "${{ inputs.new_branch_name }}" ]; then
+                  NEW_BRANCH="${{ inputs.new_branch_name }}"
+                else
+                  # Strip leading 'v', extract MAJOR.MINOR (first two numeric components)
+                  NEW_BRANCH="yc/$(echo "${TAG#v}" | grep -oE '^[0-9]+\.[0-9]+')"
+                fi
+
+                echo "Target branch: $NEW_BRANCH"
+                echo "new_branch=$NEW_BRANCH" >> $SOURCECRAFT_ENV
 
                 # Upstream tag must exist (synced via sync_upstream)
                 if ! git rev-parse "$TAG" >/dev/null 2>&1; then
@@ -267,7 +278,7 @@ workflows:
               - |
                 set -ex
                 TAG="${{ inputs.upstream_tag }}"
-                NEW_BRANCH="${{ inputs.new_branch_name }}"
+                NEW_BRANCH="$new_branch"
 
                 # Create the target branch from current HEAD (yc/master with our patches)
                 git checkout -b "$NEW_BRANCH"
@@ -289,7 +300,7 @@ workflows:
             script:
               - |
                 set -ex
-                NEW_BRANCH="${{ inputs.new_branch_name }}"
+                NEW_BRANCH="$new_branch"
 
                 git push origin "HEAD:refs/heads/$NEW_BRANCH"
                 echo "✅ Release branch $NEW_BRANCH created successfully."
