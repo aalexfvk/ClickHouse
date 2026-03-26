@@ -15,14 +15,14 @@ cubes:
     script:
       - |
         set -ex
-        git clone --branch $SOURCECRAFT_COMMIT_REF https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git .
+        git clone --branch $SOURCECRAFT_COMMIT_REF_NAME https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git .
   - name: checkout-shallow
     env:
       GIT_SSL_NO_VERIFY: 1
     script:
       - |
         set -ex
-        git clone --branch $SOURCECRAFT_COMMIT_REF --depth=1 https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git .
+        git clone --branch $SOURCECRAFT_COMMIT_REF_NAME --depth=1 https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git .
   - name: download-binary
     script:
       - s3cmd --config /etc/s3cmd/bucket.conf get s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/clickhouse
