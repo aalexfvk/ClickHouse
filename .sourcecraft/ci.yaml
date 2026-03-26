@@ -907,11 +907,10 @@ workflows:
             uses: configure-git
           - name: checkout
             uses: checkout-shallow
-          - name: build-debug
+          - name: build
             script:
-               #- python3 -m ci.praktika run "Build (amd_debug)"
-               #- ls ci/tmp/build/programs/
-               - ls -lah
+               - python3 -m ci.praktika run "Build (amd_binary)"
+               - ls ci/tmp/build/programs/
           - name: upload-binary
             script:
               - s3cmd --config /etc/s3cmd/bucket.conf put $CLICKHOUSE_BINARY_PATH s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/clickhouse
