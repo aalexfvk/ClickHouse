@@ -895,7 +895,7 @@ workflows:
     settings:
       max_cube_duration: 6h
     tasks:
-      - name: build
+      - name: build_binaries
         runs_on: [self-hosted, large]
         checkout:
           enabled: false
@@ -907,7 +907,7 @@ workflows:
             uses: configure-git
           - name: checkout
             uses: checkout-shallow
-          - name: build
+          - name: build_amd_binary
             script:
                - python3 -m ci.praktika run "Build (amd_binary)"
                - ls ci/tmp/build/programs/
@@ -917,7 +917,7 @@ workflows:
               - ls -lah
 
       - name: integration-tests-1
-        needs: [build]
+        needs: [build_binaries]
         checkout:
           enabled: false
         env:
@@ -935,7 +935,7 @@ workflows:
               - python3 -m ci.praktika run "Integration tests (amd_binary, 1/5)" --workers 4 --path $(realpath $CLICKHOUSE_BINARY_PATH)
 
       - name: integration-tests-2
-        needs: [build]
+        needs: [build_binaries]
         checkout:
           enabled: false
         env:
@@ -953,7 +953,7 @@ workflows:
               - python3 -m ci.praktika run "Integration tests (amd_binary, 2/5)" --workers 4 --path $(realpath $CLICKHOUSE_BINARY_PATH)
 
       - name: integration-tests-3
-        needs: [build]
+        needs: [build_binaries]
         checkout:
           enabled: false
         env:
@@ -971,7 +971,7 @@ workflows:
               - python3 -m ci.praktika run "Integration tests (amd_binary, 3/5)" --workers 4 --path $(realpath $CLICKHOUSE_BINARY_PATH)
 
       - name: integration-tests-4
-        needs: [build]
+        needs: [build_binaries]
         checkout:
           enabled: false
         env:
@@ -989,7 +989,7 @@ workflows:
               - python3 -m ci.praktika run "Integration tests (amd_binary, 4/5)" --workers 4 --path $(realpath $CLICKHOUSE_BINARY_PATH)
 
       - name: integration-tests-5
-        needs: [build]
+        needs: [build_binaries]
         checkout:
           enabled: false
         env:
