@@ -23,10 +23,15 @@ cubes:
       - |
         set -ex
         git clone --branch $SOURCECRAFT_COMMIT_REF_NAME --depth=1 https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git .
-  - name: download-binary
+  - name: download_amd_debug
     script:
-      - s3cmd --config /etc/s3cmd/bucket.conf get s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/clickhouse
-      # - s3cmd --config /etc/s3cmd/bucket.conf get s3://clickhouse-builds/95/clickhouse
+      - s3cmd --config /etc/s3cmd/bucket.conf get s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/amd_debug/clickhouse
+  - name: download_amd_binary
+    script:
+      - s3cmd --config /etc/s3cmd/bucket.conf get s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/amd_binary/clickhouse
+  - name: download-binary-amd_release
+    script:
+      - s3cmd --config /etc/s3cmd/bucket.conf get s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/amd_release/clickhouse
 
 on:
   schedule:
@@ -665,13 +670,13 @@ workflows:
     settings:
       max_cube_duration: 6h
     tasks:
-      - name: build
+      - name: build_amd_debug
         runs_on: [self-hosted, large]
         checkout:
           enabled: false
         env:
           GIT_SSL_NO_VERIFY: 1
-          CLICKHOUSE_BINARY_PATH: ci/tmp/build/programs/clickhouse
+          CLICKHOUSE_BINARY_PATH: ci/tmp/build/programs/self-extracting/clickhouse
         cubes:
           - name: configure-git
             uses: configure-git
@@ -687,207 +692,111 @@ workflows:
                - ls -lah
           - name: upload-binary
             script:
-              - s3cmd --config /etc/s3cmd/bucket.conf put $CLICKHOUSE_BINARY_PATH s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/clickhouse
+              - s3cmd --config /etc/s3cmd/bucket.conf put $CLICKHOUSE_BINARY_PATH s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/amd_debug/clickhouse
               - ls -lah
 
       - name: stateless-tests-debug-distributed-plan-s3-parallel
-        needs: [build]
+        needs: [build_amd_debug]
         checkout:
           enabled: false
         env:
           GIT_SSL_NO_VERIFY: 1
-          CLICKHOUSE_BINARY_PATH: clickhouse
         cubes:
           - name: configure-git
             uses: configure-git
           - name: checkout
             uses: checkout-shallow
-          - name: download-binary
-            uses: download-binary
+          - name: download_amd_debug
+            uses: download_amd_debug
           - name: run
             script:
-              - python3 -m ci.praktika run "Stateless tests (amd_debug, distributed plan, s3 storage, parallel)" --path .
+              - python3 -m ci.praktika run "Stateless tests (amd_debug, distributed plan, s3 storage, parallel)"
 
       - name: stateless-tests-debug-distributed-plan-s3-sequential
-        needs: [build]
+        needs: [build_amd_debug]
         checkout:
           enabled: false
         env:
           GIT_SSL_NO_VERIFY: 1
-          CLICKHOUSE_BINARY_PATH: clickhouse
         cubes:
           - name: configure-git
             uses: configure-git
           - name: checkout
             uses: checkout-shallow
-          - name: download-binary
-            uses: download-binary
+          - name: download_amd_debug
+            uses: download_amd_debug
           - name: run
             script:
-              - python3 -m ci.praktika run "Stateless tests (amd_debug, distributed plan, s3 storage, sequential)" --path .
+              - python3 -m ci.praktika run "Stateless tests (amd_debug, distributed plan, s3 storage, sequential)"
 
       - name: stateless-tests-debug-async-insert-s3-parallel
-        needs: [build]
+        needs: [build_amd_debug]
         checkout:
           enabled: false
         env:
           GIT_SSL_NO_VERIFY: 1
-          CLICKHOUSE_BINARY_PATH: clickhouse
         cubes:
           - name: configure-git
             uses: configure-git
           - name: checkout
             uses: checkout-shallow
-          - name: download-binary
-            uses: download-binary
+          - name: download_amd_debug
+            uses: download_amd_debug
           - name: run
             script:
-              - python3 -m ci.praktika run "Stateless tests (amd_debug, AsyncInsert, s3 storage, parallel)" --path .
+              - python3 -m ci.praktika run "Stateless tests (amd_debug, AsyncInsert, s3 storage, parallel)"
 
       - name: stateless-tests-debug-async-insert-s3-sequential
-        needs: [build]
+        needs: [build_amd_debug]
         checkout:
           enabled: false
         env:
           GIT_SSL_NO_VERIFY: 1
-          CLICKHOUSE_BINARY_PATH: clickhouse
         cubes:
           - name: configure-git
             uses: configure-git
           - name: checkout
             uses: checkout-shallow
-          - name: download-binary
-            uses: download-binary
+          - name: download_amd_debug
+            uses: download_amd_debug
           - name: run
             script:
-              - python3 -m ci.praktika run "Stateless tests (amd_debug, AsyncInsert, s3 storage, sequential)" --path .
+              - python3 -m ci.praktika run "Stateless tests (amd_debug, AsyncInsert, s3 storage, sequential)"
 
       - name: stateless-tests-debug-parallel
-        needs: [build]
+        needs: [build_amd_debug]
         checkout:
           enabled: false
         env:
           GIT_SSL_NO_VERIFY: 1
-          CLICKHOUSE_BINARY_PATH: clickhouse
         cubes:
           - name: configure-git
             uses: configure-git
           - name: checkout
             uses: checkout-shallow
-          - name: download-binary
-            uses: download-binary
+          - name: download_amd_debug
+            uses: download_amd_debug
           - name: run
             script:
-              - python3 -m ci.praktika run "Stateless tests (amd_debug, parallel)" --path .
+              - python3 -m ci.praktika run "Stateless tests (amd_debug, parallel)"
 
       # Reason: Fails on azure_cache related tests, because azurit is not started for local tests
       # - name: stateless-tests-debug-sequential
-      #   needs: [build]
+      #   needs: [build_amd_debug]
       #   checkout:
       #     enabled: false
       #   env:
       #     GIT_SSL_NO_VERIFY: 1
-      #     CLICKHOUSE_BINARY_PATH: clickhouse
       #   cubes:
       #     - name: configure-git
       #       uses: configure-git
       #     - name: checkout
       #       uses: checkout
-      #     - name: download-binary
-      #       uses: download-binary
+      #     - name: download_amd_debug
+      #       uses: download_amd_debug
       #     - name: run
       #       script:
-      #         - python3 -m ci.praktika run "Stateless tests (amd_debug, sequential)" --path .
-
-      - name: integration-tests-1
-        needs: [build]
-        checkout:
-          enabled: false
-        env:
-          GIT_SSL_NO_VERIFY: 1
-          CLICKHOUSE_BINARY_PATH: clickhouse
-        cubes:
-          - name: configure-git
-            uses: configure-git
-          - name: checkout
-            uses: checkout-shallow
-          - name: download-binary
-            uses: download-binary
-          - name: run
-            script:
-              - python3 -m ci.praktika run "Integration tests (amd_binary, 1/5)" --path $(realpath $CLICKHOUSE_BINARY_PATH)
-
-      - name: integration-tests-2
-        needs: [build]
-        checkout:
-          enabled: false
-        env:
-          GIT_SSL_NO_VERIFY: 1
-          CLICKHOUSE_BINARY_PATH: clickhouse
-        cubes:
-          - name: configure-git
-            uses: configure-git
-          - name: checkout
-            uses: checkout-shallow
-          - name: download-binary
-            uses: download-binary
-          - name: run
-            script:
-              - python3 -m ci.praktika run "Integration tests (amd_binary, 2/5)" --path $(realpath $CLICKHOUSE_BINARY_PATH)
-
-      - name: integration-tests-3
-        needs: [build]
-        checkout:
-          enabled: false
-        env:
-          GIT_SSL_NO_VERIFY: 1
-          CLICKHOUSE_BINARY_PATH: clickhouse
-        cubes:
-          - name: configure-git
-            uses: configure-git
-          - name: checkout
-            uses: checkout-shallow
-          - name: download-binary
-            uses: download-binary
-          - name: run
-            script:
-              - python3 -m ci.praktika run "Integration tests (amd_binary, 3/5)" --path $(realpath $CLICKHOUSE_BINARY_PATH)
-
-      - name: integration-tests-4
-        needs: [build]
-        checkout:
-          enabled: false
-        env:
-          GIT_SSL_NO_VERIFY: 1
-          CLICKHOUSE_BINARY_PATH: clickhouse
-        cubes:
-          - name: configure-git
-            uses: configure-git
-          - name: checkout
-            uses: checkout-shallow
-          - name: download-binary
-            uses: download-binary
-          - name: run
-            script:
-              - python3 -m ci.praktika run "Integration tests (amd_binary, 4/5)" --path $(realpath $CLICKHOUSE_BINARY_PATH)
-
-      - name: integration-tests-5
-        needs: [build]
-        checkout:
-          enabled: false
-        env:
-          GIT_SSL_NO_VERIFY: 1
-          CLICKHOUSE_BINARY_PATH: clickhouse
-        cubes:
-          - name: configure-git
-            uses: configure-git
-          - name: checkout
-            uses: checkout-shallow
-          - name: download-binary
-            uses: download-binary
-          - name: run
-            script:
-              - python3 -m ci.praktika run "Integration tests (amd_binary, 5/5)" --path $(realpath $CLICKHOUSE_BINARY_PATH)
+      #         - python3 -m ci.praktika run "Stateless tests (amd_debug, sequential)"
 
 
   integration_tests_workflow:
@@ -895,13 +804,13 @@ workflows:
     settings:
       max_cube_duration: 6h
     tasks:
-      - name: build_binaries
+      - name: build_amd_binary
         runs_on: [self-hosted, large]
         checkout:
           enabled: false
         env:
           GIT_SSL_NO_VERIFY: 1
-          CLICKHOUSE_BINARY_PATH: ci/tmp/build/programs/clickhouse
+          CLICKHOUSE_BINARY_PATH: ci/tmp/build/programs/self-extracting/clickhouse
         cubes:
           - name: configure-git
             uses: configure-git
@@ -913,95 +822,90 @@ workflows:
                - ls ci/tmp/build/programs/
           - name: upload-binary
             script:
-              - s3cmd --config /etc/s3cmd/bucket.conf put $CLICKHOUSE_BINARY_PATH s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/clickhouse
+              - s3cmd --config /etc/s3cmd/bucket.conf put $CLICKHOUSE_BINARY_PATH s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/amd_binary/clickhouse
               - ls -lah
 
       - name: integration-tests-1
-        needs: [build_binaries]
+        needs: [build_amd_binary]
         checkout:
           enabled: false
         env:
           GIT_SSL_NO_VERIFY: 1
-          CLICKHOUSE_BINARY_PATH: clickhouse
         cubes:
           - name: configure-git
             uses: configure-git
           - name: checkout
             uses: checkout-shallow
-          - name: download-binary
-            uses: download-binary
+          - name: download_amd_binary
+            uses: download_amd_binary
           - name: run
             script:
-              - python3 -m ci.praktika run "Integration tests (amd_binary, 1/5)" --workers 4 --path $(realpath $CLICKHOUSE_BINARY_PATH)
+              - python3 -m ci.praktika run "Integration tests (amd_binary, 1/5)"
 
       - name: integration-tests-2
-        needs: [build_binaries]
+        needs: [build_amd_binary]
         checkout:
           enabled: false
         env:
           GIT_SSL_NO_VERIFY: 1
-          CLICKHOUSE_BINARY_PATH: clickhouse
         cubes:
           - name: configure-git
             uses: configure-git
           - name: checkout
             uses: checkout-shallow
-          - name: download-binary
-            uses: download-binary
+          - name: download_amd_binary
+            uses: download_amd_binary
           - name: run
             script:
-              - python3 -m ci.praktika run "Integration tests (amd_binary, 2/5)" --workers 4 --path $(realpath $CLICKHOUSE_BINARY_PATH)
+              - python3 -m ci.praktika run "Integration tests (amd_binary, 2/5)"
 
       - name: integration-tests-3
-        needs: [build_binaries]
+        needs: [build_amd_binary]
         checkout:
           enabled: false
         env:
           GIT_SSL_NO_VERIFY: 1
-          CLICKHOUSE_BINARY_PATH: clickhouse
         cubes:
           - name: configure-git
             uses: configure-git
           - name: checkout
             uses: checkout-shallow
-          - name: download-binary
-            uses: download-binary
+          - name: download_amd_binary
+            uses: download_amd_binary
           - name: run
             script:
-              - python3 -m ci.praktika run "Integration tests (amd_binary, 3/5)" --workers 4 --path $(realpath $CLICKHOUSE_BINARY_PATH)
+              - python3 -m ci.praktika run "Integration tests (amd_binary, 3/5)"
 
       - name: integration-tests-4
-        needs: [build_binaries]
+        needs: [build_amd_binary]
         checkout:
           enabled: false
         env:
           GIT_SSL_NO_VERIFY: 1
-          CLICKHOUSE_BINARY_PATH: clickhouse
         cubes:
           - name: configure-git
             uses: configure-git
           - name: checkout
             uses: checkout-shallow
-          - name: download-binary
-            uses: download-binary
+          - name: download_amd_binary
+            uses: download_amd_binary
           - name: run
             script:
-              - python3 -m ci.praktika run "Integration tests (amd_binary, 4/5)" --workers 4 --path $(realpath $CLICKHOUSE_BINARY_PATH)
+              - python3 -m ci.praktika run "Integration tests (amd_binary, 4/5)"
 
       - name: integration-tests-5
-        needs: [build_binaries]
+        needs: [build_amd_binary]
         checkout:
           enabled: false
         env:
           GIT_SSL_NO_VERIFY: 1
-          CLICKHOUSE_BINARY_PATH: clickhouse
         cubes:
           - name: configure-git
             uses: configure-git
           - name: checkout
             uses: checkout-shallow
-          - name: download-binary
-            uses: download-binary
+          - name: download_amd_binary
+            uses: download_amd_binary
           - name: run
             script:
-              - python3 -m ci.praktika run "Integration tests (amd_binary, 5/5)" --workers 4 --path $(realpath $CLICKHOUSE_BINARY_PATH)
+              - python3 -m ci.praktika run "Integration tests (amd_binary, 5/5)"
