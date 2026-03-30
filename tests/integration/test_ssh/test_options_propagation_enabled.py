@@ -19,6 +19,9 @@ SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 @pytest.fixture(scope="module", autouse=True)
 def started_cluster():
     try:
+        # SSH client requires private key files to have strict permissions (0600),
+        # but git does not preserve file permissions beyond the executable bit.
+        os.chmod(f"{SCRIPT_DIR}/keys/lucy_ed25519", 0o600)
         cluster.start()
         yield cluster
 
