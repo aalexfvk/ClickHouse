@@ -145,6 +145,16 @@ def create_parser():
         action="store_true",
         default="",
     )
+    run_parser.add_argument(
+        "--sccache",
+        help=(
+            "Pass SCCACHE_* and AWS_* environment variables from the host into the Docker container "
+            "and configure sccache S3 backend in the job script. "
+            "Useful for local runs where sccache S3 credentials are already set in the environment."
+        ),
+        action="store_true",
+        default=False,
+    )
 
     _yaml_parser = subparsers.add_parser("yaml", help="Generate YAML workflows")
 
@@ -289,6 +299,7 @@ def main():
                 path=args.path,
                 path_1=args.path_1,
                 workers=args.workers,
+                sccache=args.sccache,
             )
     else:
         parser.print_help()

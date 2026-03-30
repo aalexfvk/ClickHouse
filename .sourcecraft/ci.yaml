@@ -43,11 +43,15 @@ cubes:
           exit 0
         fi
 
+        # Disable xtrace to avoid printing secrets into logs
+        { set +x; } 2>/dev/null
         S3_ACCESS_KEY=$(grep -E '^\s*access_key\s*=' "$S3_CONF" | head -1 | sed 's/.*=\s*//')
         S3_SECRET_KEY=$(grep -E '^\s*secret_key\s*=' "$S3_CONF" | head -1 | sed 's/.*=\s*//')
         S3_HOST_BASE=$(grep -E '^\s*host_base\s*=' "$S3_CONF" | head -1 | sed 's/.*=\s*//')
 
-        # Export sccache environment variables for S3-compatible storage
+        # Export sccache environment variables for S3-compatible storage.
+        # These will be picked up by praktika --sccache flag and passed into the Docker container.
+        # sccache server is started inside Docker by build_clickhouse.py, not here.
         echo "AWS_ACCESS_KEY_ID=$S3_ACCESS_KEY" >> $SOURCECRAFT_ENV
         echo "AWS_SECRET_ACCESS_KEY=$S3_SECRET_KEY" >> $SOURCECRAFT_ENV
         echo "SCCACHE_BUCKET=clickhouse-builds" >> $SOURCECRAFT_ENV
@@ -56,10 +60,7 @@ cubes:
         echo "SCCACHE_S3_KEY_PREFIX=ccache/sccache" >> $SOURCECRAFT_ENV
         echo "SCCACHE_S3_USE_SSL=true" >> $SOURCECRAFT_ENV
         echo "SCCACHE_IDLE_TIMEOUT=7200" >> $SOURCECRAFT_ENV
-
-        # Start sccache server and show initial stats
-        sccache --start-server || sccache --start-server || sccache --start-server
-        sccache --show-stats
+        set -x
 
 on:
   schedule:
@@ -717,7 +718,7 @@ workflows:
               - python3 -m ci.praktika run "Style check"
           - name: build-debug
             script:
-               #- python3 -m ci.praktika run "Build (amd_debug)"
+               #- python3 -m ci.praktika run "Build (amd_debug)" --sccache
                #- ls ci/tmp/build/programs/
                - ls -lah
           - name: upload-binary
@@ -850,7 +851,7 @@ workflows:
             uses: setup-sccache
           - name: build_amd_binary
             script:
-               - python3 -m ci.praktika run "Build (amd_binary)"
+               - python3 -m ci.praktika run "Build (amd_binary)" --sccache
                - ls ci/tmp/build/programs/
           - name: upload-binary
             script:

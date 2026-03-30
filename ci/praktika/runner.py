@@ -295,6 +295,7 @@ class Runner:
         path="",
         path_1="",
         workers=None,
+        sccache=False,
     ):
         # re-set envs for local run
         env = _Environment.get()
@@ -918,6 +919,7 @@ class Runner:
         path="",
         path_1="",
         workers=None,
+        sccache=False,
     ):
         self._load_local_env()
 
@@ -991,6 +993,7 @@ class Runner:
                     path=path,
                     path_1=path_1,
                     workers=workers,
+                    sccache=sccache,
                 )
                 res = run_code == 0
                 if not res:
