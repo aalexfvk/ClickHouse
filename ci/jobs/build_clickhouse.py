@@ -124,6 +124,11 @@ def main():
     os.environ["SCCACHE_ERROR_LOG"] = f"{build_dir}/sccache.log"
     os.environ["SCCACHE_LOG"] = "info"
     os.makedirs(build_dir, exist_ok=True)
+    
+    # Normalise absolute workspace paths in compiler command lines before
+    # hashing so the cache key is stable across runs even when the checkout
+    # directory changes (e.g. /tmp/<uuid>/workspace on each SourceCraft run).
+    os.environ["SCCACHE_BASEDIR"] = current_directory
 
     if info.is_local_run:
         if os.environ.get("SCCACHE_ENDPOINT"):
