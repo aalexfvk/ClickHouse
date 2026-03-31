@@ -847,9 +847,12 @@ tar -czf ./ci/tmp/logs.tar.gz \
         session_timeout_parallel = 7200
         session_timeout_sequential = 7200
 
-    if args.session_timeout:
-        session_timeout_parallel = args.session_timeout * 2
-        session_timeout_sequential = args.session_timeout
+    session_timeout = args.session_timeout or int(
+        os.environ.get("TEST_SESSION_TIMEOUT", 5400)
+    )
+    if session_timeout:
+        session_timeout_parallel = session_timeout * 2
+        session_timeout_sequential = session_timeout
 
     error_info = []
 

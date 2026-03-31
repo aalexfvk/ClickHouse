@@ -864,6 +864,7 @@ workflows:
           enabled: false
         env:
           GIT_SSL_NO_VERIFY: 1
+          TEST_SESSION_TIMEOUT: 10800
         cubes:
           - name: configure-git
             uses: configure-git
@@ -881,6 +882,7 @@ workflows:
           enabled: false
         env:
           GIT_SSL_NO_VERIFY: 1
+          TEST_SESSION_TIMEOUT: 10800
         cubes:
           - name: configure-git
             uses: configure-git
@@ -898,6 +900,7 @@ workflows:
           enabled: false
         env:
           GIT_SSL_NO_VERIFY: 1
+          TEST_SESSION_TIMEOUT: 10800
         cubes:
           - name: configure-git
             uses: configure-git
@@ -915,6 +918,7 @@ workflows:
           enabled: false
         env:
           GIT_SSL_NO_VERIFY: 1
+          TEST_SESSION_TIMEOUT: 10800
         cubes:
           - name: configure-git
             uses: configure-git
@@ -932,6 +936,7 @@ workflows:
           enabled: false
         env:
           GIT_SSL_NO_VERIFY: 1
+          TEST_SESSION_TIMEOUT: 10800
         cubes:
           - name: configure-git
             uses: configure-git
