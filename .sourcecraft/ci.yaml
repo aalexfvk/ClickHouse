@@ -859,6 +859,7 @@ workflows:
               - ls -lah
 
       - name: integration-tests-1
+        runs_on: [self-hosted, medium]
         needs: [build_amd_binary]
         checkout:
           enabled: false
@@ -877,6 +878,7 @@ workflows:
               - python3 -m ci.praktika run "Integration tests (amd_binary, 1/5)"
 
       - name: integration-tests-2
+        runs_on: [self-hosted, medium]
         needs: [build_amd_binary]
         checkout:
           enabled: false
@@ -895,6 +897,7 @@ workflows:
               - python3 -m ci.praktika run "Integration tests (amd_binary, 2/5)"
 
       - name: integration-tests-3
+        runs_on: [self-hosted, medium]
         needs: [build_amd_binary]
         checkout:
           enabled: false
@@ -913,6 +916,7 @@ workflows:
               - python3 -m ci.praktika run "Integration tests (amd_binary, 3/5)"
 
       - name: integration-tests-4
+        runs_on: [self-hosted, medium]
         needs: [build_amd_binary]
         checkout:
           enabled: false
@@ -931,6 +935,7 @@ workflows:
               - python3 -m ci.praktika run "Integration tests (amd_binary, 4/5)"
 
       - name: integration-tests-5
+        runs_on: [self-hosted, medium]
         needs: [build_amd_binary]
         checkout:
           enabled: false
