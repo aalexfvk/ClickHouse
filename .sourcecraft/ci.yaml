@@ -875,7 +875,19 @@ workflows:
             uses: download_amd_binary
           - name: run
             script:
+              - set +e
               - python3 -m ci.praktika run "Integration tests (amd_binary, 1/5)"
+              - ret="$?"
+              - set -e
+              - |
+                for f in ci/tmp/*.tar.gz ci/tmp/*.log ci/tmp/*.jsonl; do
+                  [ -f "$f" ] && s3cmd --config /etc/s3cmd/bucket.conf put "$f" s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/integration-tests-1/ || true
+                done
+              - |
+                if [ "$ret" -ne 0 ]; then
+                  echo "Integration tests failed"
+                  exit 1
+                fi
 
       - name: integration-tests-2
         runs_on: [self-hosted, medium]
@@ -894,7 +906,19 @@ workflows:
             uses: download_amd_binary
           - name: run
             script:
+              - set +e
               - python3 -m ci.praktika run "Integration tests (amd_binary, 2/5)"
+              - ret="$?"
+              - set -e
+              - |
+                for f in ci/tmp/*.tar.gz ci/tmp/*.log ci/tmp/*.jsonl; do
+                  [ -f "$f" ] && s3cmd --config /etc/s3cmd/bucket.conf put "$f" s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/integration-tests-2/ || true
+                done
+              - |
+                if [ "$ret" -ne 0 ]; then
+                  echo "Integration tests failed"
+                  exit 1
+                fi
 
       - name: integration-tests-3
         runs_on: [self-hosted, medium]
@@ -913,7 +937,19 @@ workflows:
             uses: download_amd_binary
           - name: run
             script:
+              - set +e
               - python3 -m ci.praktika run "Integration tests (amd_binary, 3/5)"
+              - ret="$?"
+              - set -e
+              - |
+                for f in ci/tmp/*.tar.gz ci/tmp/*.log ci/tmp/*.jsonl; do
+                  [ -f "$f" ] && s3cmd --config /etc/s3cmd/bucket.conf put "$f" s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/integration-tests-3/ || true
+                done
+              - |
+                if [ "$ret" -ne 0 ]; then
+                  echo "Integration tests failed"
+                  exit 1
+                fi
 
       - name: integration-tests-4
         runs_on: [self-hosted, medium]
@@ -932,7 +968,19 @@ workflows:
             uses: download_amd_binary
           - name: run
             script:
+              - set +e
               - python3 -m ci.praktika run "Integration tests (amd_binary, 4/5)"
+              - ret="$?"
+              - set -e
+              - |
+                for f in ci/tmp/*.tar.gz ci/tmp/*.log ci/tmp/*.jsonl; do
+                  [ -f "$f" ] && s3cmd --config /etc/s3cmd/bucket.conf put "$f" s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/integration-tests-4/ || true
+                done
+              - |
+                if [ "$ret" -ne 0 ]; then
+                  echo "Integration tests failed"
+                  exit 1
+                fi
 
       - name: integration-tests-5
         runs_on: [self-hosted, medium]
@@ -951,4 +999,16 @@ workflows:
             uses: download_amd_binary
           - name: run
             script:
+              - set +e
               - python3 -m ci.praktika run "Integration tests (amd_binary, 5/5)"
+              - ret="$?"
+              - set -e
+              - |
+                for f in ci/tmp/*.tar.gz ci/tmp/*.log ci/tmp/*.jsonl; do
+                  [ -f "$f" ] && s3cmd --config /etc/s3cmd/bucket.conf put "$f" s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/integration-tests-5/ || true
+                done
+              - |
+                if [ "$ret" -ne 0 ]; then
+                  echo "Integration tests failed"
+                  exit 1
+                fi
