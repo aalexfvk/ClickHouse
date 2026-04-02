@@ -881,7 +881,7 @@ workflows:
               - set -e
               - |
                 if [ "$ret" -ne 0 ]; then
-                  for f in ci/tmp/*.tar.gz ci/tmp/*.log ci/tmp/*.jsonl; do
+                  for f in ci/tmp/*.*z ci/tmp/*.log ci/tmp/*.jsonl; do
                     [ -f "$f" ] && s3cmd --config /etc/s3cmd/bucket.conf put "$f" s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/integration-tests-1/ || true
                   done
                   echo "Integration tests failed"
@@ -911,7 +911,7 @@ workflows:
               - set -e
               - |
                 if [ "$ret" -ne 0 ]; then
-                  for f in ci/tmp/*.tar.gz ci/tmp/*.log ci/tmp/*.jsonl; do
+                  for f in ci/tmp/*.*z ci/tmp/*.log ci/tmp/*.jsonl; do
                     [ -f "$f" ] && s3cmd --config /etc/s3cmd/bucket.conf put "$f" s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/integration-tests-2/ || true
                   done
                   echo "Integration tests failed"
@@ -941,7 +941,7 @@ workflows:
               - set -e
               - |
                 if [ "$ret" -ne 0 ]; then
-                  for f in ci/tmp/*.tar.gz ci/tmp/*.log ci/tmp/*.jsonl; do
+                  for f in ci/tmp/*.*z ci/tmp/*.log ci/tmp/*.jsonl; do
                     [ -f "$f" ] && s3cmd --config /etc/s3cmd/bucket.conf put "$f" s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/integration-tests-3/ || true
                   done
                   echo "Integration tests failed"
@@ -971,7 +971,7 @@ workflows:
               - set -e
               - |
                 if [ "$ret" -ne 0 ]; then
-                  for f in ci/tmp/*.tar.gz ci/tmp/*.log ci/tmp/*.jsonl; do
+                  for f in ci/tmp/*.*z ci/tmp/*.log ci/tmp/*.jsonl; do
                     [ -f "$f" ] && s3cmd --config /etc/s3cmd/bucket.conf put "$f" s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/integration-tests-4/ || true
                   done
                   echo "Integration tests failed"
@@ -1001,7 +1001,7 @@ workflows:
               - set -e
               - |
                 if [ "$ret" -ne 0 ]; then
-                  for f in ci/tmp/*.tar.gz ci/tmp/*.log ci/tmp/*.jsonl; do
+                  for f in ci/tmp/*.*z ci/tmp/*.log ci/tmp/*.jsonl; do
                     [ -f "$f" ] && s3cmd --config /etc/s3cmd/bucket.conf put "$f" s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/integration-tests-5/ || true
                   done
                   echo "Integration tests failed"
