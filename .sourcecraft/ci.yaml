@@ -70,6 +70,9 @@ on:
     - workflows: auto_rebase_check
       cron: "30 9 * * *"
       description: "auto rebase check, runs 30 min after sync_upstream"
+    - workflows: do_rebase_poller
+      cron: "*/2 * * * *"
+      description: "poll open PRs every 2 min and apply rebase if do-rebase label is set"
 
   # push:
   #   - workflows: [tests_workflow]
@@ -867,6 +870,29 @@ workflows:
                 fi
 
                 echo -e "\n✅ All branches processed successfully."
+
+  do_rebase_poller:
+    tasks:
+      - name: poll-and-apply
+        checkout:
+          enabled: false
+        env:
+          GIT_SSL_NO_VERIFY: 1
+          API_BASE: https://public-api.o.cloud.yandex.net
+          ORG_SLUG: yc
+          REPO_SLUG: clickhouse
+          REBASE_LABEL: do-rebase
+        cubes:
+          - name: clone-repo
+            script:
+              - |
+                set -ex
+                git clone --depth=1 --branch yc/master \
+                  https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git .
+
+          - name: run-poller
+            script:
+              - python3 .sourcecraft/scripts/do_rebase_poller.py
 
   fast_test_workflow:
     runs_on: self-hosted
