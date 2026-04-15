@@ -806,6 +806,7 @@ workflows:
                 
                 **Type:** Auto-rebase
                 **Branch:** $BRANCH
+                **Previous Base:** $OLD_BASE
                 **Upstream Tag:** $LATEST_TAG
                 
                 ---
@@ -822,6 +823,7 @@ workflows:
                 
                 **Type:** Manual resolution
                 **Branch:** $BRANCH
+                **Previous Base:** $OLD_BASE
                 **Upstream Tag:** $LATEST_TAG
                 
                 Rebase failed with conflicts. Please:
