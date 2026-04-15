@@ -67,6 +67,9 @@ on:
     - workflows: sync_upstream
       cron: "0 9 * * *"
       description: "every day at 9:00 AM"
+    - workflows: auto_rebase_check
+      cron: "30 9 * * *"
+      description: "auto rebase check, runs 30 min after sync_upstream"
 
   # push:
   #   - workflows: [tests_workflow]
@@ -664,7 +667,204 @@ workflows:
                   }" \
                   "https://public-api.o.cloud.yandex.net/repos/yc/clickhouse/pulls"
 
+  auto_rebase_check:
+    inputs:
+      target_branch:
+        description: 'Branch to rebase (e.g. yc/master, yc/25.12) or "all" for all yc/* branches'
+        required: false
+        default: 'all'
+        type: string
+      create_pr:
+        description: 'Create candidate branch and PR (true = full rebase + PR, false = dry-run check only)'
+        required: false
+        default: 'false'
+        type: string
 
+    tasks:
+      - name: rebase-check
+        checkout:
+          enabled: false
+        env:
+          GIT_SSL_NO_VERIFY: 1
+          CLICKHOUSE_UPSTREAM_REPO: https://github.com/ClickHouse/ClickHouse.git
+          INPUT_BRANCH: ${{ inputs.target_branch }}
+          CREATE_PR: ${{ inputs.create_pr }}
+        cubes:
+          - name: configure-git
+            script:
+              - |
+                git config --global user.name 'CI Bot'
+                git config --global user.email 'cibot@example.com'
+
+          - name: clone-repo
+            script:
+              - |
+                set -euo pipefail
+                git clone https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git .
+                git fetch --tags --quiet
+
+          - name: run-rebase-loop
+            script:
+              - |
+                set -euo pipefail
+
+                ALLOWED_SUFFIXES=("stable" "lts")
+
+                echo "Mode: $([ "$CREATE_PR" = "true" ] && echo "full (create PR)" || echo "dry-run (check only)")"
+
+                get_latest_tag() {
+                  local release_line=$1
+                  local patterns=()
+                  for suffix in "${ALLOWED_SUFFIXES[@]}"; do
+                    if [[ "$release_line" == "master" ]]; then
+                      patterns+=("v*-${suffix}")
+                    else
+                      patterns+=("v${release_line}.*-${suffix}")
+                    fi
+                  done
+                  echo "  [DEBUG] get_latest_tag: release_line=$release_line patterns=${patterns[*]}" >&2
+                  local result count
+                  result=$(git tag -l "${patterns[@]}" --sort=-v:refname | head -n 1)
+                  count=$(git tag -l "${patterns[@]}" | wc -l)
+                  echo "  [DEBUG] get_latest_tag: total_matching=$count result='$result'" >&2
+                  echo "  [DEBUG] get_latest_tag: first 5 tags:" >&2
+                  git tag -l "${patterns[@]}" --sort=-v:refname | head -n 5 >&2
+                  echo "$result"
+                }
+
+                declare -a BRANCHES
+                if [[ "$INPUT_BRANCH" == "all" ]]; then
+                  mapfile -t BRANCHES < <(git ls-remote --heads origin | awk '{print $2}' | sed 's|refs/heads/||' | grep -E '^yc/(master|[0-9]+\.[0-9]+)$')
+                else
+                  BRANCHES=("$INPUT_BRANCH")
+                fi
+
+                echo "Branches to check: ${BRANCHES[*]}"
+                FAILED_BRANCHES=()
+
+                for BRANCH in "${BRANCHES[@]}"; do
+                  echo -e "\n========================================="
+                  echo "Processing branch: $BRANCH"
+                  echo "========================================="
+
+                  git fetch origin "$BRANCH" --quiet
+
+                  OLD_BASE=$(git describe --tags --abbrev=0 --match "v*" "origin/$BRANCH" 2>/dev/null || true)
+                  if [[ -z "$OLD_BASE" ]]; then
+                    echo "::warning::No upstream tag found on $BRANCH, skipping."
+                    continue
+                  fi
+                  echo "Current base: $OLD_BASE"
+
+                  RELEASE_LINE=${BRANCH#yc/}
+
+                  LATEST_TAG=$(get_latest_tag "$RELEASE_LINE")
+                  if [[ -z "$LATEST_TAG" ]]; then
+                    echo "::warning::No upstream tag found for release line $RELEASE_LINE, skipping."
+                    continue
+                  fi
+                  echo "Latest upstream tag: $LATEST_TAG"
+
+                  if [[ "$OLD_BASE" == "$LATEST_TAG" ]]; then
+                    echo "✅ $BRANCH is already based on $LATEST_TAG, nothing to do."
+                    continue
+                  fi
+
+                  echo "⚠️ $BRANCH needs rebase: $OLD_BASE → $LATEST_TAG"
+                  CANDIDATE="yc/rebase/${RELEASE_LINE}/${LATEST_TAG}"
+
+                  if git ls-remote --exit-code --heads origin "$CANDIDATE" >/dev/null 2>&1; then
+                    echo "ℹ️ Candidate branch $CANDIDATE already exists. Skipping."
+                    continue
+                  fi
+
+                  # ================= DRY-RUN MODE =================
+                  if [[ "$CREATE_PR" != "true" ]]; then
+                    echo "⏳ Starting dry-run rebase..."
+                    git checkout --detach "origin/$BRANCH" --quiet
+                    
+                    if git rebase --onto "$LATEST_TAG" "$OLD_BASE" HEAD >/dev/null 2>&1; then
+                      echo "✅ Dry-run rebase of $BRANCH onto $LATEST_TAG succeeded."
+                    else
+                      git rebase --abort || true
+                      echo "::error::Dry-run rebase of $BRANCH onto $LATEST_TAG has CONFLICTS."
+                      FAILED_BRANCHES+=("$BRANCH")
+                    fi
+                    
+                    git reset --hard HEAD --quiet
+                    continue
+                  fi
+
+                  # ================= FULL MODE (Create PR) =================
+                  echo "⏳ Starting full rebase and PR creation..."
+                  git checkout -B "$CANDIDATE" "origin/$BRANCH" --quiet
+                  
+                  if git rebase --onto "$LATEST_TAG" "$OLD_BASE" "$CANDIDATE" >/dev/null 2>&1; then
+                    git push origin "$CANDIDATE" --force --quiet
+                    PR_TITLE="[Auto-rebase] $BRANCH → $LATEST_TAG"
+                    PR_DESC="### 🤖 Automated Rebase PR
+                
+                **Type:** Auto-rebase
+                **Branch:** $BRANCH
+                **Upstream Tag:** $LATEST_TAG
+                
+                ---
+                ⚠️ **DO NOT MERGE MANUALLY**
+                1. Wait for checks to pass.
+                2. Use the **Apply Rebase** pipeline to finalize."
+                  else
+                    git rebase --abort || true
+                    git checkout -B "$CANDIDATE" "origin/$BRANCH" --quiet
+                    git push origin "$CANDIDATE" --force --quiet
+                    
+                    PR_TITLE="[Auto-rebase CONFLICT] $BRANCH → $LATEST_TAG"
+                    PR_DESC="### ⚠️ Rebase Conflict — Manual Fix Required
+                
+                **Type:** Manual resolution
+                **Branch:** $BRANCH
+                **Upstream Tag:** $LATEST_TAG
+                
+                Rebase failed with conflicts. Please:
+                1. \`git fetch origin && git checkout $CANDIDATE\`
+                2. \`git rebase --onto $LATEST_TAG $OLD_BASE\`
+                3. Resolve conflicts, then \`git push origin $CANDIDATE --force\`
+                4. CI will re-run tests automatically."
+                    
+                    FAILED_BRANCHES+=("$BRANCH")
+                  fi
+
+                  PR_DESC_ESCAPED=$(printf '%s' "$PR_DESC" | sed ':a;N;$!ba;s/\n/\\n/g')
+
+                  curl --insecure -sS -X POST \
+                    -H "Authorization: Bearer $SOURCECRAFT_TOKEN" \
+                    -H "Content-Type: application/json" \
+                    -d "{
+                      \"source_branch\": \"$CANDIDATE\",
+                      \"target_branch\": \"$BRANCH\",
+                      \"title\": \"$PR_TITLE\",
+                      \"description\": \"$PR_DESC_ESCAPED\",
+                      \"publish\": true
+                    }" \
+                    "https://public-api.o.cloud.yandex.net/repos/yc/clickhouse/pulls"
+
+                  echo "✅ PR created: $PR_TITLE"
+                  git checkout --detach HEAD --quiet
+                done
+
+                # ================= FINALIZE =================
+                if [[ ${#FAILED_BRANCHES[@]} -gt 0 ]]; then
+                  echo -e "\n❌ The following branches have rebase conflicts:\n"
+                  for fb in "${FAILED_BRANCHES[@]}"; do echo "  - $fb"; done
+                  
+                  if [[ "$CREATE_PR" == "true" ]]; then
+                    echo "::error::PRs created for conflicting branches. Manual resolution required."
+                  else
+                    echo "::error::Dry-run conflicts detected. Manual intervention required before creating PRs."
+                  fi
+                  exit 1
+                fi
+
+                echo -e "\n✅ All branches processed successfully."
 
   fast_test_workflow:
     runs_on: self-hosted
