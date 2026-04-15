@@ -718,12 +718,34 @@ workflows:
               - python3 -m ci.praktika run "Style check"
           - name: build-debug
             script:
-               #- python3 -m ci.praktika run "Build (amd_debug)" --sccache
-               #- ls ci/tmp/build/programs/
-               - ls -lah
+               - python3 -m ci.praktika run "Build (amd_debug)" --sccache
+               - ls ci/tmp/build/programs/
           - name: upload-binary
             script:
               - s3cmd --config /etc/s3cmd/bucket.conf put $CLICKHOUSE_BINARY_PATH s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/amd_debug/clickhouse
+              - ls -lah
+
+      - name: build_amd_binary
+        runs_on: [self-hosted, large]
+        checkout:
+          enabled: false
+        env:
+          GIT_SSL_NO_VERIFY: 1
+          CLICKHOUSE_BINARY_PATH: ci/tmp/build/programs/self-extracting/clickhouse
+        cubes:
+          - name: configure-git
+            uses: configure-git
+          - name: checkout
+            uses: checkout-shallow
+          - name: setup-sccache
+            uses: setup-sccache
+          - name: build_amd_binary
+            script:
+               - python3 -m ci.praktika run "Build (amd_binary)" --sccache
+               - ls ci/tmp/build/programs/
+          - name: upload-binary
+            script:
+              - s3cmd --config /etc/s3cmd/bucket.conf put $CLICKHOUSE_BINARY_PATH s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/amd_binary/clickhouse
               - ls -lah
 
       - name: stateless-tests-debug-distributed-plan-s3-parallel
@@ -828,35 +850,6 @@ workflows:
       #     - name: run
       #       script:
       #         - python3 -m ci.praktika run "Stateless tests (amd_debug, sequential)"
-
-
-  integration_tests_workflow:
-    runs_on: self-hosted
-    settings:
-      max_cube_duration: 6h
-    tasks:
-      - name: build_amd_binary
-        runs_on: [self-hosted, large]
-        checkout:
-          enabled: false
-        env:
-          GIT_SSL_NO_VERIFY: 1
-          CLICKHOUSE_BINARY_PATH: ci/tmp/build/programs/self-extracting/clickhouse
-        cubes:
-          - name: configure-git
-            uses: configure-git
-          - name: checkout
-            uses: checkout-shallow
-          - name: setup-sccache
-            uses: setup-sccache
-          - name: build_amd_binary
-            script:
-               - python3 -m ci.praktika run "Build (amd_binary)" --sccache
-               - ls ci/tmp/build/programs/
-          - name: upload-binary
-            script:
-              - s3cmd --config /etc/s3cmd/bucket.conf put $CLICKHOUSE_BINARY_PATH s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/amd_binary/clickhouse
-              - ls -lah
 
       - name: integration-tests-1
         runs_on: [self-hosted, medium]
