@@ -74,7 +74,7 @@ on:
   #       branches: ["yc/rebase/**"]
 
   pull_request:
-    - workflows: [integration_tests_workflow]
+    - workflows: [tests_workflow]
       filter:
         target_branches: ["yc/master"]
 
