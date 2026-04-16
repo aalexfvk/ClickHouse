@@ -70,9 +70,6 @@ on:
     - workflows: auto_rebase_check
       cron: "30 9 * * *"
       description: "auto rebase check, runs 30 min after sync_upstream"
-    - workflows: do_rebase_poller
-      cron: "*/2 * * * *"
-      description: "poll open PRs every 2 min and apply rebase if do-rebase label is set"
 
   # push:
   #   - workflows: [tests_workflow]
@@ -464,9 +461,21 @@ workflows:
 
     tasks:
       - name: replace-branch
+        checkout:
+          enabled: false
         env:
           GIT_SSL_NO_VERIFY: 1
         cubes:
+          - name: configure-git
+            uses: configure-git
+
+          - name: clone-repo
+            script:
+              - |
+                set -ex
+                git clone https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git .
+                git fetch --tags --quiet
+
           - name: validate-and-replace
             script:
               - |
@@ -476,28 +485,41 @@ workflows:
 
                 CANDIDATE="${{ inputs.candidate_branch }}"
                 TARGET="${{ inputs.target_branch }}"
+                PR_NUMBER="${{ inputs.pr_number }}"
 
-                echo "🔍 Resolving SHA for candidate: $CANDIDATE"
+                git fetch origin "$CANDIDATE"
+                git fetch origin "$TARGET"
 
-                CANDIDATE_SHA=$(git ls-remote --heads origin "$CANDIDATE" | awk '{print $1}')
+                CANDIDATE_SHA=$(git rev-parse "origin/$CANDIDATE")
+                TARGET_SHA=$(git rev-parse "origin/$TARGET")
 
-                if [ -z "$CANDIDATE_SHA" ]; then
-                   echo "::error::Branch '$CANDIDATE' not found on remote origin."
-                   exit 1
+                # Safe push - use origin/ prefix for remote ref check
+                echo "🚀 Attempting safe push with force-with-lease..."
+                echo "  Checking that origin/$TARGET is at $TARGET_SHA"
+                set +e
+                git push --force-with-lease="origin/$TARGET:$TARGET_SHA" origin "$CANDIDATE_SHA:refs/heads/$TARGET"
+                PUSH_STATUS=$?
+                set -e
+                echo "  Push exit code: $PUSH_STATUS"
+
+                if [ $PUSH_STATUS -eq 0 ]; then
+                  echo "✅ Success. '$TARGET' is now at $CANDIDATE_SHA"
+                  # Push successful -> delete candidate
+                  git push origin --delete "$CANDIDATE" || true
+                else
+                  echo "::error::🚨 RACE CONDITION PROTECTION: New commits appeared in $TARGET!"
+                  echo "::error::Candidate is outdated. PR is not closed, but candidate branch needs to be updated."
+                  echo "::error::👉 Please run 'create_rebase_pr' pipeline with 'force_update=true' checkbox"
+                  
+                  if [ -n "$PR_NUMBER" ]; then
+                    COMMENT="🚨 **RACE CONDITION PROTECTION**: New commits appeared in \`$TARGET\`!
+                Candidate is outdated. Please run \`create_rebase_pr\` pipeline with \`force_update=true\` checkbox to update the candidate branch."
+                    
+                    python3 .sourcecraft/scripts/post_pr_comment.py "$PR_NUMBER" "$COMMENT" || true
+                  fi
+                  
+                  exit 1
                 fi
-
-                echo "🎯 Candidate SHA: $CANDIDATE_SHA"
-                echo "🚨 ATTENTION: Force updating '$TARGET' to match '$CANDIDATE'"
-
-                git push origin "$CANDIDATE_SHA:refs/heads/$TARGET" --force
-                echo "✅ Success. '$TARGET' is now at $CANDIDATE_SHA"
-
-          - name: delete-candidate-branch
-            script:
-              - |
-                set -ex
-                echo "Removing candidate branch..."
-                git push origin --delete "${{ inputs.candidate_branch }}" || true
 
   create_rebase_pr:
     inputs:
@@ -509,6 +531,11 @@ workflows:
         upstream_tag:
           description: 'Upstream tag to rebase onto (e.g. v25.12.5.6-stable)'
           required: true
+          type: string
+        force_update:
+          description: 'Force recreate the candidate branch even if it exists'
+          required: false
+          default: 'false'
           type: string
 
     tasks:
@@ -578,7 +605,9 @@ workflows:
 
                 SKIP_REBASE="false"
 
-                if git ls-remote --exit-code --heads origin "$CANDIDATE_NAME"; then
+                if [ "${{ inputs.force_update }}" == "true" ]; then
+                   echo "⚠️ force_update requested! Branch will be recreated based on fresh ${{ inputs.target_branch }}."
+                elif git ls-remote --exit-code --heads origin "$CANDIDATE_NAME"; then
                    echo "🔍 Candidate branch exists in remote. Checking its base..."
                    git fetch origin "$CANDIDATE_NAME"
                    

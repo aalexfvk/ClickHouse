@@ -13,6 +13,7 @@ Usage:
 """
 
 import json
+import ssl
 import sys
 import urllib.error
 import urllib.request
@@ -69,8 +70,14 @@ class SourceCraftClient:
         url = f"{self._base}{path}"
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(url, data=data, headers=self._headers(), method=method)
+        
+        # Create SSL context that doesn't verify certificates
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        
         try:
-            with urllib.request.urlopen(req) as resp:
+            with urllib.request.urlopen(req, context=ctx) as resp:
                 return json.loads(resp.read())
         except urllib.error.HTTPError as exc:
             text = exc.read().decode(errors="replace")
@@ -99,6 +106,18 @@ class SourceCraftClient:
             if not page_token:
                 break
         return pulls
+
+    def create_pull_request_comment(self, pr_slug: str, text: str) -> str:
+        """
+        Add a comment to the given PR.
+        Returns the comment slug (or '<unknown>' on failure).
+        """
+        resp = self._request(
+            "POST",
+            self._repo_path(f"/pulls/{pr_slug}/comments"),
+            {"text": text},
+        )
+        return resp.get("slug", "<unknown>")
 
     # ------------------------------------------------------------------
     # Labels
