@@ -487,37 +487,46 @@ workflows:
                 TARGET="${{ inputs.target_branch }}"
                 PR_NUMBER="${{ inputs.pr_number }}"
 
+                # 1. Extract original SHA from name candidate branch
+                # Example: yc/rebase/master/v25.1/from-a1b2c3d4e5 -> a1b2c3d4e5
+                EXPECTED_SHA=$(echo "$CANDIDATE" | grep -o 'from-.*' | cut -d'-' -f2)
+
+                if [ -z "$EXPECTED_SHA" ]; then
+                  echo "::error::Branch name $CANDIDATE does not contain the /from-<sha> marker!"
+                  echo "::error::Cannot guarantee safe push. Aborting to prevent data loss."
+                  exit 1
+                fi
+
                 git fetch origin "$CANDIDATE"
-                git fetch origin "$TARGET"
-
                 CANDIDATE_SHA=$(git rev-parse "origin/$CANDIDATE")
-                TARGET_SHA=$(git rev-parse "origin/$TARGET")
 
-                # Safe push - use origin/ prefix for remote ref check
                 echo "🚀 Attempting safe push with force-with-lease..."
-                echo "  Checking that origin/$TARGET is at $TARGET_SHA"
+                echo "  Target Ref: refs/heads/$TARGET"
+                echo "  Expected Old SHA: $EXPECTED_SHA"
+                echo "  New Rebased SHA: $CANDIDATE_SHA"
+                
                 set +e
-                git push --force-with-lease="origin/$TARGET:$TARGET_SHA" origin "$CANDIDATE_SHA:refs/heads/$TARGET"
+                git push --force-with-lease="refs/heads/$TARGET:$EXPECTED_SHA" origin "$CANDIDATE_SHA:refs/heads/$TARGET"
                 PUSH_STATUS=$?
                 set -e
-                echo "  Push exit code: $PUSH_STATUS"
 
                 if [ $PUSH_STATUS -eq 0 ]; then
-                  echo "✅ Success. '$TARGET' is now at $CANDIDATE_SHA"
-                  # Push successful -> delete candidate
+                  echo "✅ Success. '$TARGET' is safely updated."
                   git push origin --delete "$CANDIDATE" || true
                 else
-                  echo "::error::🚨 RACE CONDITION PROTECTION: New commits appeared in $TARGET!"
-                  echo "::error::Candidate is outdated. PR is not closed, but candidate branch needs to be updated."
-                  echo "::error::👉 Please run 'create_rebase_pr' pipeline with 'force_update=true' checkbox"
+                  echo "::error::🚨 RACE CONDITION PROTECTION WORKED!"
+                  echo "::error::New commits appeared in $TARGET since this PR was created."
+                  echo "::error::Your changes are safe, but the PR is outdated."
+                  echo "::error::👉 Please run 'create_rebase_pr' pipeline again to re-rebase on top of the new commits."
                   
                   if [ -n "$PR_NUMBER" ]; then
-                    COMMENT="🚨 **RACE CONDITION PROTECTION**: New commits appeared in \`$TARGET\`!
-                Candidate is outdated. Please run \`create_rebase_pr\` pipeline with \`force_update=true\` checkbox to update the candidate branch."
+                    COMMENT="🚨 **RACE CONDITION PROTECTION WORKED!**
+                    New commits appeared in \`$TARGET\` while this PR was open. 
+                    To prevent overwriting colleague's code, the merge was blocked.
+                    Please close this PR and run \`create_rebase_pr\` pipeline again to generate a fresh branch."
                     
                     python3 .sourcecraft/scripts/post_pr_comment.py "$PR_NUMBER" "$COMMENT" || true
                   fi
-                  
                   exit 1
                 fi
 
@@ -597,29 +606,21 @@ workflows:
               - |
                 set -ex
                 SAFE_TAG=$(echo "${{ inputs.upstream_tag }}" | sed 's/[^a-zA-Z0-9.-]//g')
-                # Strip leading 'yc/' from target branch name: yc/master → master, yc/25.12 → 25.12
                 SAFE_TARGET=$(echo "${{ inputs.target_branch }}" | sed 's|^yc/||')
 
-                CANDIDATE_NAME="yc/rebase/${SAFE_TARGET}/${SAFE_TAG}"
+                ORIGINAL_SHA=$(git rev-parse --short=10 HEAD)
+                
+                CANDIDATE_NAME="yc/rebase/${SAFE_TARGET}/${SAFE_TAG}/from-${ORIGINAL_SHA}"
                 echo "candidate_name=$CANDIDATE_NAME" >> $SOURCECRAFT_ENV
+                echo "original_sha=$ORIGINAL_SHA" >> $SOURCECRAFT_ENV
 
                 SKIP_REBASE="false"
 
                 if [ "${{ inputs.force_update }}" == "true" ]; then
-                   echo "⚠️ force_update requested! Branch will be recreated based on fresh ${{ inputs.target_branch }}."
+                   echo "⚠️ force_update requested! Branch will be recreated."
                 elif git ls-remote --exit-code --heads origin "$CANDIDATE_NAME"; then
-                   echo "🔍 Candidate branch exists in remote. Checking its base..."
-                   git fetch origin "$CANDIDATE_NAME"
-                   
-                   # Check latest upstream tag on the candidate branch (same convention as detect-old-base)
-                   CANDIDATE_BASE=$(git describe --tags --abbrev=0 --match "v*" "origin/$CANDIDATE_NAME")
-                   
-                   if [ "$CANDIDATE_BASE" == "${{ inputs.upstream_tag }}" ]; then
-                      echo "✅ Branch $CANDIDATE_NAME is already based on ${{ inputs.upstream_tag }}."
-                      SKIP_REBASE="true"
-                   else
-                      echo "⚠️ Branch exists, but based on $CANDIDATE_BASE (expected ${{ inputs.upstream_tag }}). Will re-rebase."
-                   fi
+                   echo "✅ Candidate branch with this exact base ($ORIGINAL_SHA) already exists. Skipping rebase."
+                   SKIP_REBASE="true"
                 fi
                 
                 echo "skip_rebase=$SKIP_REBASE" >> $SOURCECRAFT_ENV
@@ -629,27 +630,22 @@ workflows:
               - |
                 set -ex
                 if [ "$skip_rebase" == "true" ]; then
-                   # Branch exists only on remote — create local tracking branch
                    git checkout -b "$candidate_name" "origin/$candidate_name"
                 else
-                   # Create (or reset) local branch from current HEAD (target_branch)
                    git checkout -B "$candidate_name"
                 fi
           - name: do-rebase
             script:
               - |
                 set -ex
-
                 if [ "$skip_rebase" == "true" ]; then
-                   echo "⏭️ Branch is up-to-date. Skipping rebase."
                    exit 0
                 fi
 
                 if git rebase --onto "${{ inputs.upstream_tag }}" "$old_base" "$candidate_name"; then
                   echo "Rebase is done successfully."
                 else
-                  echo "::error::Rebase is failed due to conflicts."
-                  echo "::notice::Manual intervention required. Please rebase locally."
+                  echo "::error::Rebase failed due to conflicts."
                   git rebase --abort
                   exit 1
                 fi
@@ -665,11 +661,7 @@ workflows:
             script:
               - |
                 set -ex
-
-                # If the candidate branch already existed and was up-to-date,
-                # a PR may already exist — skip creation to avoid duplicates.
                 if [ "$skip_rebase" == "true" ]; then
-                  echo "⏭️ Candidate is up-to-date. Skipping PR creation."
                   exit 0
                 fi
 
@@ -679,11 +671,11 @@ workflows:
                 **Type:** Manual resolution or Auto-rebase
                 **Branch:** ${{ inputs.target_branch }}
                 **Upstream Tag:** ${{ inputs.upstream_tag }}
+                **Base Commit Protected:** \`${original_sha}\`
                 
                 ---
                 ⚠️ **DO NOT MERGE MANUALLY**
-                1. Wait for checks to pass.
-                2. Use the **Apply Rebase** pipeline to finalize."
+                Use the **Apply Rebase** pipeline to finalize."
 
                 DESCRIPTION_ESCAPED=$(printf '%s' "$DESCRIPTION" | sed ':a;N;$!ba;s/\n/\\n/g')
 
@@ -803,7 +795,8 @@ workflows:
                   fi
 
                   echo "⚠️ $BRANCH needs rebase: $OLD_BASE → $LATEST_TAG"
-                  CANDIDATE="yc/rebase/${RELEASE_LINE}/${LATEST_TAG}"
+                  CURRENT_SHA=$(git rev-parse --short=10 "origin/$BRANCH")
+                  CANDIDATE="yc/rebase/${RELEASE_LINE}/${LATEST_TAG}/from-${CURRENT_SHA}"
 
                   if git ls-remote --exit-code --heads origin "$CANDIDATE" >/dev/null 2>&1; then
                     echo "ℹ️ Candidate branch $CANDIDATE already exists. Skipping."
@@ -857,6 +850,7 @@ workflows:
                 **Branch:** $BRANCH
                 **Previous Base:** $OLD_BASE
                 **Upstream Tag:** $LATEST_TAG
+                **Base Commit:** ${CURRENT_SHA}
                 
                 Rebase failed with conflicts. Please:
                 1. \`git fetch origin && git checkout $CANDIDATE\`
