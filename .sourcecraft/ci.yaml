@@ -1,9 +1,8 @@
+env:
+  CLICKHOUSE_REPO_URL: https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git
+  CLICKHOUSE_UPSTREAM_REPO_URL: https://github.com/ClickHouse/ClickHouse.git
+
 cubes:
-  - name: test-cube-1
-    script:
-      - |
-        git config --global user.name 'CI Bot'
-        git config --global user.email 'cibot@example.com'
   - name: configure-git
     script:
       - |
@@ -15,14 +14,19 @@ cubes:
     script:
       - |
         set -ex
-        git clone --branch $SOURCECRAFT_COMMIT_REF_NAME https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git .
+        git clone --branch $SOURCECRAFT_COMMIT_REF_NAME $CLICKHOUSE_REPO_URL .
   - name: checkout-shallow
     env:
       GIT_SSL_NO_VERIFY: 1
     script:
       - |
         set -ex
-        git clone --branch $SOURCECRAFT_COMMIT_REF_NAME --depth=1 https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git .
+        git clone --branch $SOURCECRAFT_COMMIT_REF_NAME --depth=1 $CLICKHOUSE_REPO_URL .
+  - name: setup-stateless-test
+    uses:
+      - configure-git
+      - checkout-shallow
+      - download_amd_debug
   - name: download_amd_debug
     script:
       - s3cmd --config /etc/s3cmd/bucket.conf get s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/amd_debug/clickhouse
@@ -71,28 +75,19 @@ on:
       cron: "30 9 * * *"
       description: "auto rebase check, runs 30 min after sync_upstream"
 
-  # push:
-  #   - workflows: [tests_workflow]
-  #     filter:
-  #       branches: ["yc/rebase/**"]
-
   pull_request:
     - workflows: [tests_workflow]
       filter:
         target_branches: ["yc/master"]
-
-  pull_request:
     - workflows: [tests_workflow]
       filter:
         source_branches: "yc/rebase/**"
         target_branches: ["yc/**"]
-  
-  pull_request:
     - workflows: [tests_workflow]
       filter:
         source_branches: ["yc/backport/**"]
         target_branches: ["yc/**"]
-  
+
 
 workflows:
   sync_upstream:
@@ -102,29 +97,8 @@ workflows:
           - name: sync-upstream
             env:
               GIT_SSL_NO_VERIFY: 1
-              CLICKHOUSE_UPSTREAM_REPO: https://github.com/ClickHouse/ClickHouse.git
             script:
-              - |
-                set -ex
-                git remote add upstream ${CLICKHOUSE_UPSTREAM_REPO}
-                
-                # 1. Dynamically generate the list of refspecs for master and release branches (25.12, 26.1, etc.)
-                #    - git ls-remote --heads upstream : retrieves the list of all remote branches
-                #    - awk '{print $2}' : keeps only the ref names (e.g., refs/heads/master, refs/heads/24.3)
-                #    - grep -E ... : filters only 'master' and release branches (format: digit.digit)
-                #    - awk ... : converts them to the fetch refspec format "+refs/heads/NAME:refs/remotes/upstream/NAME"
-                REF_SPECS=$(git ls-remote --heads upstream | \
-                awk '{print $2}' | \
-                grep -E 'refs/heads/(master|[0-9]+\.[0-9]+)$' | \
-                awk -F/ '{print "+"$0":refs/remotes/upstream/"$3}' | \
-                tr '\n' ' ')
-
-                # 2. Execute fetch with the substituted list of branches.
-                git fetch upstream --tags --quiet $REF_SPECS 2>&1 | grep -vE "multiple configurations|Skipping second one" || true
-
-                # 3. Push to origin
-                git push origin "refs/remotes/upstream/*:refs/heads/*" --force
-                git push origin --tags --force
+              - bash .sourcecraft/scripts/sync_upstream.sh
 
 
   backport:
@@ -151,86 +125,28 @@ workflows:
           GIT_SSL_NO_VERIFY: 1
         cubes:
           - name: configure-git
-            script:
-              - |
-                git config --global user.name 'CI Bot'
-                git config --global user.email 'cibot@example.com'
+            uses: configure-git
           
           - name: checkout
             uses: checkout
 
           - name: prepare-branch
             script:
-              - |
-                set -ex
-                TARGET="${{ inputs.target_branch }}"
-                SHA="${{ inputs.commit_sha }}"
-
-                echo "Backporting commit $SHA to $TARGET..."
-
-                git fetch origin "$TARGET"
-                # git checkout "$TARGET"
-                git checkout -b "$TARGET" origin/$TARGET
-
-                # Strip leading 'yc/' from target branch name: yc/25.12 → 25.12
-                SAFE_TARGET=$(echo "$TARGET" | sed 's|^yc/||')
-                BP_BRANCH="yc/backport/${SAFE_TARGET}/${SHA::7}"
-
-                echo "Creating branch: $BP_BRANCH"                
-                git checkout -b "$BP_BRANCH"
-
-                echo "bp_branch=$BP_BRANCH" >> $SOURCECRAFT_ENV
+              - bash .sourcecraft/scripts/backport_prepare_branch.sh "${{ inputs.target_branch }}" "${{ inputs.commit_sha }}"
           - name: cherry-pick
             script:
-              - |
-                set -ex
-                SHA="${{ inputs.commit_sha }}"
-
-                git fetch origin "$SHA"
-
-                # '-x' adds "(cherry picked from commit ...)" to description
-                if git cherry-pick -x "$SHA"; then
-                  echo "✅ Cherry-pick successful."
-                else
-                  echo "::error::Cherry-pick failed due to conflicts."
-                  echo "::error::Automatic backport is not possible."
-                  echo "::notice::Please perform manual backport locally."
-                  git cherry-pick --abort
-                  exit 1
-                fi
+              - bash .sourcecraft/scripts/backport_cherry_pick.sh "${{ inputs.commit_sha }}"
           - name: push
             script:
               - |
                 set -ex
-                TARGET="${{ inputs.target_branch }}"
                 BP_BRANCH="$bp_branch"
-                SHA="${{ inputs.commit_sha }}"
-
                 echo "Pushing $BP_BRANCH..."
                 git push origin "$BP_BRANCH" --force
 
           - name: create-backport-pr
             script:
-              - |
-                set -ex
-                TARGET="${{ inputs.target_branch }}"
-                BP_BRANCH="$bp_branch"
-                SHA="${{ inputs.commit_sha }}"
-
-                TITLE="[Backport $TARGET] Cherry-pick $SHA"
-                DESC="Backport of commit $SHA to $TARGET."
-
-                curl --insecure -X POST \
-                  -H "Authorization: Bearer $SOURCECRAFT_TOKEN" \
-                  -H "Content-Type: application/json" \
-                  -d "{
-                    \"source_branch\": \"$BP_BRANCH\",
-                    \"target_branch\": \"$TARGET\",
-                    \"title\": \"$TITLE\",
-                    \"description\": \"$DESC\",
-                    \"publish\": true
-                  }" \
-                  "https://public-api.o.cloud.yandex.net/repos/yc/clickhouse/pulls"
+              - bash .sourcecraft/scripts/backport_create_pr.sh "${{ inputs.target_branch }}" "${{ inputs.commit_sha }}"
 
 
 
@@ -253,85 +169,27 @@ workflows:
           GIT_SSL_NO_VERIFY: 1
         cubes:
           - name: configure-git
-            script:
-              - |
-                git config --global user.name 'CI Bot'
-                git config --global user.email 'cibot@example.com'
+            uses: configure-git
 
           - name: checkout
             script:
               - |
                 set -ex
                 # Clone from yc/master — it is the source of our patches
-                git clone --branch yc/master https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git .
+                git clone --branch yc/master $CLICKHOUSE_REPO_URL .
                 git checkout $SOURCECRAFT_COMMIT_REF
 
           - name: validate-inputs
             script:
-              - |
-                set -ex
-                TAG="${{ inputs.upstream_tag }}"
-
-                # Auto-generate branch name from tag if not provided:
-                # v25.12.6.38-stable → yc/25.12
-                if [ -n "${{ inputs.new_branch_name }}" ]; then
-                  NEW_BRANCH="${{ inputs.new_branch_name }}"
-                else
-                  # Strip leading 'v', extract MAJOR.MINOR (first two numeric components)
-                  NEW_BRANCH="yc/$(echo "${TAG#v}" | grep -oE '^[0-9]+\.[0-9]+')"
-                fi
-
-                echo "Target branch: $NEW_BRANCH"
-                echo "new_branch=$NEW_BRANCH" >> $SOURCECRAFT_ENV
-
-                # Upstream tag must exist (synced via sync_upstream)
-                if ! git rev-parse "$TAG" >/dev/null 2>&1; then
-                  echo "::error::Tag $TAG not found. Run sync_upstream first."
-                  exit 1
-                fi
-
-                # Target branch must NOT exist yet
-                if git ls-remote --exit-code --heads origin "$NEW_BRANCH" >/dev/null 2>&1; then
-                  echo "::error::Branch $NEW_BRANCH already exists."
-                  echo "::error::To update an existing release branch, use create_rebase_pr instead."
-                  exit 1
-                fi
+              - bash .sourcecraft/scripts/init_release_branch_validate.sh "${{ inputs.upstream_tag }}" "${{ inputs.new_branch_name }}"
 
           - name: detect-patch-base
             script:
-              - |
-                set -ex
-                # Find the most recent upstream tag reachable from yc/master HEAD.
-                # This is the "old base" — the tag our patches currently sit on top of.
-                # "--match v*" matches only upstream tags (e.g. v25.12.1.1-stable).
-                # Our own release tags intentionally have no leading 'v' (e.g. 25.12.1.1-stable-yc.1)
-                # so they are never picked up here.
-                OLD_BASE=$(git describe --tags --abbrev=0 --match "v*" HEAD)
-                echo "Current patch base in yc/master: $OLD_BASE"
-                echo "old_base=$OLD_BASE" >> $SOURCECRAFT_ENV
+              - bash .sourcecraft/scripts/init_release_branch_detect_base.sh
 
           - name: create-release-branch
             script:
-              - |
-                set -ex
-                TAG="${{ inputs.upstream_tag }}"
-                NEW_BRANCH="$new_branch"
-
-                # Create the target branch from current HEAD (yc/master with our patches)
-                git checkout -b "$NEW_BRANCH"
-
-                # Rebase our patches (old_base..NEW_BRANCH) onto the target upstream tag.
-                # --onto TARGET OLD_BASE CURRENT_BRANCH
-                # Takes all commits between old_base and HEAD, replays them on top of TAG.
-                if git rebase --onto "$TAG" "$old_base" "$NEW_BRANCH"; then
-                  echo "✅ Rebase successful. Patches applied on top of $TAG."
-                else
-                  echo "::error::Rebase failed due to conflicts."
-                  echo "::error::Manual intervention required: rebase yc/master onto $TAG locally,"
-                  echo "::error::resolve conflicts, then push as $NEW_BRANCH manually."
-                  git rebase --abort
-                  exit 1
-                fi
+              - bash .sourcecraft/scripts/init_release_branch_create.sh "${{ inputs.upstream_tag }}"
 
           - name: push-release-branch
             script:
@@ -359,78 +217,24 @@ workflows:
           GIT_SSL_NO_VERIFY: 1
         cubes:
           - name: configure-git
-            script:
-              - |
-                git config --global user.name 'CI Bot'
-                git config --global user.email 'cibot@example.com'
+            uses: configure-git
           
           - name: checkout
             script:
               - |
                 set -ex
                 SOURCE_BRANCH="${{ inputs.source_branch }}"
-                git clone --branch "$SOURCE_BRANCH" --single-branch https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git .
+                git clone --branch "$SOURCE_BRANCH" --single-branch $CLICKHOUSE_REPO_URL .
                 # Fetch tags so that read-version can check if the tag already exists
                 git fetch --tags
 
           - name: validate-branch
             script:
-              - |
-                set -ex
-                SOURCE_BRANCH="${{ inputs.source_branch }}"
-
-                # Release branches must follow the yc/XX.YY pattern
-                if ! echo "$SOURCE_BRANCH" | grep -qE '^yc/[0-9]+\.[0-9]+$'; then
-                  echo "::error::Invalid branch: $SOURCE_BRANCH"
-                  echo "::error::Only release branches matching yc/XX.YY are allowed."
-                  echo "::error::To create a new release branch, use init_release_branch first."
-                  exit 1
-                fi
-
-                if ! git ls-remote --exit-code --heads origin "$SOURCE_BRANCH" >/dev/null 2>&1; then
-                  echo "::error::Branch $SOURCE_BRANCH does not exist on remote."
-                  echo "::error::Create it first with init_release_branch."
-                  exit 1
-                fi
-
-                echo "target_branch=$SOURCE_BRANCH" >> $SOURCECRAFT_ENV
+              - bash .sourcecraft/scripts/create_release_validate.sh "${{ inputs.source_branch }}"
 
           - name: compute-version
             script:
-              - |
-                set -ex
-
-                # Find the latest upstream tag reachable from HEAD (e.g. v25.12.7.21-stable).
-                # Our own tags have no leading 'v', so --match "v*" skips them.
-                UPSTREAM_TAG=$(git describe --tags --abbrev=0 --match "v*" HEAD)
-                # Strip leading 'v': v25.12.7.21-stable → 25.12.7.21-stable
-                UPSTREAM_VER="${UPSTREAM_TAG#v}"
-
-                # Find the latest our yc tag reachable from HEAD (e.g. 25.12.7.21-stable-yc.2).
-                # If none exists yet — this is the first release on this upstream base.
-                LAST_YC_TAG=$(git describe --tags --abbrev=0 --match "*-yc.*" HEAD 2>/dev/null || true)
-
-                if [ -n "$LAST_YC_TAG" ] && [[ "$LAST_YC_TAG" == "${UPSTREAM_VER}-yc."* ]]; then
-                  # Same upstream base — increment the yc counter
-                  LAST_NUM="${LAST_YC_TAG##*-yc.}"
-                  NEXT_NUM=$((LAST_NUM + 1))
-                else
-                  # New upstream base or no yc tags yet — start from 1
-                  NEXT_NUM=1
-                fi
-
-                RELEASE_VER="${UPSTREAM_VER}-yc.${NEXT_NUM}"
-
-                if git rev-parse "$RELEASE_VER" >/dev/null 2>&1; then
-                  echo "::error::Tag $RELEASE_VER already exists (race condition?). Re-run the workflow."
-                  exit 1
-                fi
-
-                echo "Computed release version: $RELEASE_VER"
-                echo "ver=$RELEASE_VER" >> $SOURCECRAFT_ENV
-
-                SHA=$(git rev-parse HEAD)
-                echo "sha=$SHA" >> $SOURCECRAFT_ENV
+              - bash .sourcecraft/scripts/create_release_compute_version.sh
 
           - name: finalize
             script:
@@ -473,62 +277,12 @@ workflows:
             script:
               - |
                 set -ex
-                git clone https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git .
+                git clone --depth=1 $CLICKHOUSE_REPO_URL .
                 git fetch --tags --quiet
 
           - name: validate-and-replace
             script:
-              - |
-                set -ex
-                git config --global user.name 'CI Bot'
-                git config --global user.email 'cibot@example.com'
-
-                CANDIDATE="${{ inputs.candidate_branch }}"
-                TARGET="${{ inputs.target_branch }}"
-                PR_NUMBER="${{ inputs.pr_number }}"
-
-                # 1. Extract original SHA from name candidate branch
-                # Example: yc/rebase/master/v25.1/from-a1b2c3d4e5 -> a1b2c3d4e5
-                EXPECTED_SHA=$(echo "$CANDIDATE" | grep -o 'from-.*' | cut -d'-' -f2)
-
-                if [ -z "$EXPECTED_SHA" ]; then
-                  echo "::error::Branch name $CANDIDATE does not contain the /from-<sha> marker!"
-                  echo "::error::Cannot guarantee safe push. Aborting to prevent data loss."
-                  exit 1
-                fi
-
-                git fetch origin "$CANDIDATE"
-                CANDIDATE_SHA=$(git rev-parse "origin/$CANDIDATE")
-
-                echo "🚀 Attempting safe push with force-with-lease..."
-                echo "  Target Ref: refs/heads/$TARGET"
-                echo "  Expected Old SHA: $EXPECTED_SHA"
-                echo "  New Rebased SHA: $CANDIDATE_SHA"
-                
-                set +e
-                git push --force-with-lease="refs/heads/$TARGET:$EXPECTED_SHA" origin "$CANDIDATE_SHA:refs/heads/$TARGET"
-                PUSH_STATUS=$?
-                set -e
-
-                if [ $PUSH_STATUS -eq 0 ]; then
-                  echo "✅ Success. '$TARGET' is safely updated."
-                  git push origin --delete "$CANDIDATE" || true
-                else
-                  echo "::error::🚨 RACE CONDITION PROTECTION WORKED!"
-                  echo "::error::New commits appeared in $TARGET since this PR was created."
-                  echo "::error::Your changes are safe, but the PR is outdated."
-                  echo "::error::👉 Please run 'create_rebase_pr' pipeline again to re-rebase on top of the new commits."
-                  
-                  if [ -n "$PR_NUMBER" ]; then
-                    COMMENT="🚨 **RACE CONDITION PROTECTION WORKED!**
-                    New commits appeared in \`$TARGET\` while this PR was open. 
-                    To prevent overwriting colleague's code, the merge was blocked.
-                    Please close this PR and run \`create_rebase_pr\` pipeline again to generate a fresh branch."
-                    
-                    python3 .sourcecraft/scripts/post_pr_comment.py "$PR_NUMBER" "$COMMENT" || true
-                  fi
-                  exit 1
-                fi
+              - bash .sourcecraft/scripts/apply_rebase_candidate.sh "${{ inputs.candidate_branch }}" "${{ inputs.target_branch }}" "${{ inputs.pr_number }}"
 
   create_rebase_pr:
     inputs:
@@ -555,17 +309,14 @@ workflows:
           GIT_SSL_NO_VERIFY: 1
         cubes:
           - name: configure-git
-            script:
-              - |
-                git config --global user.name 'CI Bot'
-                git config --global user.email 'cibot@example.com'
+            uses: configure-git
 
           - name: checkout
             script:
               - |
                 set -ex
                 # Clone the exact target branch — source of our patches
-                git clone --branch "${{ inputs.target_branch }}" https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git .
+                git clone --branch "${{ inputs.target_branch }}" $CLICKHOUSE_REPO_URL .
                 # Fetch all tags so that git describe and git rev-parse work correctly
                 git fetch --tags
 
@@ -579,51 +330,11 @@ workflows:
                 fi
           - name: detect-old-base
             script:
-              - |
-                set -ex
-                # "--match v*" matches only upstream tags (e.g. v25.12.1.1-stable).
-                # Our own release tags intentionally have no leading 'v' (e.g. 25.12.1.1-stable-yc.1)
-                # so they are never picked up here.
-                OLD_BASE=$(git describe --tags --abbrev=0 --match "v*" HEAD)
-                echo "Current base determined as: $OLD_BASE"
-
-                # Is already rebased
-                if [ "$OLD_BASE" == "${{ inputs.upstream_tag }}" ]; then
-                  echo "::error::Branch is already based on ${{ inputs.upstream_tag }}."
-                  exit 1
-                fi
-
-                # Is new tag ancestor of old base
-                if git merge-base --is-ancestor "${{ inputs.upstream_tag }}" HEAD; then
-                  echo "::warning::Tag ${{ inputs.upstream_tag }} is already merged into history."
-                  exit 1
-                fi
-
-                echo "old_base=$OLD_BASE" >> $SOURCECRAFT_ENV
+              - bash .sourcecraft/scripts/create_rebase_pr_detect_old_base.sh "${{ inputs.upstream_tag }}"
 
           - name: check-if-candidate-exist
             script:
-              - |
-                set -ex
-                SAFE_TAG=$(echo "${{ inputs.upstream_tag }}" | sed 's/[^a-zA-Z0-9.-]//g')
-                SAFE_TARGET=$(echo "${{ inputs.target_branch }}" | sed 's|^yc/||')
-
-                ORIGINAL_SHA=$(git rev-parse --short=10 HEAD)
-                
-                CANDIDATE_NAME="yc/rebase/${SAFE_TARGET}/${SAFE_TAG}/from-${ORIGINAL_SHA}"
-                echo "candidate_name=$CANDIDATE_NAME" >> $SOURCECRAFT_ENV
-                echo "original_sha=$ORIGINAL_SHA" >> $SOURCECRAFT_ENV
-
-                SKIP_REBASE="false"
-
-                if [ "${{ inputs.force_update }}" == "true" ]; then
-                   echo "⚠️ force_update requested! Branch will be recreated."
-                elif git ls-remote --exit-code --heads origin "$CANDIDATE_NAME"; then
-                   echo "✅ Candidate branch with this exact base ($ORIGINAL_SHA) already exists. Skipping rebase."
-                   SKIP_REBASE="true"
-                fi
-                
-                echo "skip_rebase=$SKIP_REBASE" >> $SOURCECRAFT_ENV
+              - bash .sourcecraft/scripts/create_rebase_pr_check_candidate.sh "${{ inputs.upstream_tag }}" "${{ inputs.target_branch }}" "${{ inputs.force_update }}"
 
           - name: checkout-candidate
             script:
@@ -655,41 +366,11 @@ workflows:
                   set -ex
                   if [ "$skip_rebase" == "true" ]; then
                     exit 0
-                  fi                  
+                  fi
                   git push origin "$candidate_name" --force
           - name: create-rebase-pr
             script:
-              - |
-                set -ex
-                if [ "$skip_rebase" == "true" ]; then
-                  exit 0
-                fi
-
-                TITLE="Rebase ${{ inputs.target_branch }} on ${{ inputs.upstream_tag }}"
-                DESCRIPTION="### 🤖 Automated Rebase PR
-                
-                **Type:** Manual resolution or Auto-rebase
-                **Branch:** ${{ inputs.target_branch }}
-                **Upstream Tag:** ${{ inputs.upstream_tag }}
-                **Base Commit Protected:** \`${original_sha}\`
-                
-                ---
-                ⚠️ **DO NOT MERGE MANUALLY**
-                Use the **Apply Rebase** pipeline to finalize."
-
-                DESCRIPTION_ESCAPED=$(printf '%s' "$DESCRIPTION" | sed ':a;N;$!ba;s/\n/\\n/g')
-
-                curl --insecure -X POST \
-                  -H "Authorization: Bearer $SOURCECRAFT_TOKEN" \
-                  -H "Content-Type: application/json" \
-                  -d "{
-                    \"source_branch\": \"$candidate_name\",
-                    \"target_branch\": \"${{ inputs.target_branch }}\",
-                    \"title\": \"$TITLE\",
-                    \"description\": \"$DESCRIPTION_ESCAPED\",
-                    \"publish\": true
-                  }" \
-                  "https://public-api.o.cloud.yandex.net/repos/yc/clickhouse/pulls"
+              - bash .sourcecraft/scripts/create_rebase_pr_create_pr.sh "${{ inputs.target_branch }}" "${{ inputs.upstream_tag }}"
 
   auto_rebase_check:
     inputs:
@@ -710,189 +391,22 @@ workflows:
           enabled: false
         env:
           GIT_SSL_NO_VERIFY: 1
-          CLICKHOUSE_UPSTREAM_REPO: https://github.com/ClickHouse/ClickHouse.git
           INPUT_BRANCH: ${{ inputs.target_branch }}
           CREATE_PR: ${{ inputs.create_pr }}
         cubes:
           - name: configure-git
-            script:
-              - |
-                git config --global user.name 'CI Bot'
-                git config --global user.email 'cibot@example.com'
+            uses: configure-git
 
           - name: clone-repo
             script:
               - |
                 set -euo pipefail
-                git clone https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git .
+                git clone $CLICKHOUSE_REPO_URL .
                 git fetch --tags --quiet
 
           - name: run-rebase-loop
             script:
-              - |
-                set -euo pipefail
-
-                ALLOWED_SUFFIXES=("stable" "lts")
-
-                echo "Mode: $([ "$CREATE_PR" = "true" ] && echo "full (create PR)" || echo "dry-run (check only)")"
-
-                get_latest_tag() {
-                  local release_line=$1
-                  local patterns=()
-                  for suffix in "${ALLOWED_SUFFIXES[@]}"; do
-                    if [[ "$release_line" == "master" ]]; then
-                      patterns+=("v*-${suffix}")
-                    else
-                      patterns+=("v${release_line}.*-${suffix}")
-                    fi
-                  done
-                  echo "  [DEBUG] get_latest_tag: release_line=$release_line patterns=${patterns[*]}" >&2
-                  local result count
-                  result=$(git tag -l "${patterns[@]}" --sort=-v:refname | head -n 1)
-                  count=$(git tag -l "${patterns[@]}" | wc -l)
-                  echo "  [DEBUG] get_latest_tag: total_matching=$count result='$result'" >&2
-                  echo "  [DEBUG] get_latest_tag: first 5 tags:" >&2
-                  git tag -l "${patterns[@]}" --sort=-v:refname | head -n 5 >&2
-                  echo "$result"
-                }
-
-                declare -a BRANCHES
-                if [[ "$INPUT_BRANCH" == "all" ]]; then
-                  mapfile -t BRANCHES < <(git ls-remote --heads origin | awk '{print $2}' | sed 's|refs/heads/||' | grep -E '^yc/(master|[0-9]+\.[0-9]+)$')
-                else
-                  BRANCHES=("$INPUT_BRANCH")
-                fi
-
-                echo "Branches to check: ${BRANCHES[*]}"
-                FAILED_BRANCHES=()
-
-                for BRANCH in "${BRANCHES[@]}"; do
-                  echo -e "\n========================================="
-                  echo "Processing branch: $BRANCH"
-                  echo "========================================="
-
-                  git fetch origin "$BRANCH" --quiet
-
-                  OLD_BASE=$(git describe --tags --abbrev=0 --match "v*" "origin/$BRANCH" 2>/dev/null || true)
-                  if [[ -z "$OLD_BASE" ]]; then
-                    echo "::warning::No upstream tag found on $BRANCH, skipping."
-                    continue
-                  fi
-                  echo "Current base: $OLD_BASE"
-
-                  RELEASE_LINE=${BRANCH#yc/}
-
-                  LATEST_TAG=$(get_latest_tag "$RELEASE_LINE")
-                  if [[ -z "$LATEST_TAG" ]]; then
-                    echo "::warning::No upstream tag found for release line $RELEASE_LINE, skipping."
-                    continue
-                  fi
-                  echo "Latest upstream tag: $LATEST_TAG"
-
-                  if [[ "$OLD_BASE" == "$LATEST_TAG" ]]; then
-                    echo "✅ $BRANCH is already based on $LATEST_TAG, nothing to do."
-                    continue
-                  fi
-
-                  echo "⚠️ $BRANCH needs rebase: $OLD_BASE → $LATEST_TAG"
-                  CURRENT_SHA=$(git rev-parse --short=10 "origin/$BRANCH")
-                  CANDIDATE="yc/rebase/${RELEASE_LINE}/${LATEST_TAG}/from-${CURRENT_SHA}"
-
-                  if git ls-remote --exit-code --heads origin "$CANDIDATE" >/dev/null 2>&1; then
-                    echo "ℹ️ Candidate branch $CANDIDATE already exists. Skipping."
-                    continue
-                  fi
-
-                  # ================= DRY-RUN MODE =================
-                  if [[ "$CREATE_PR" != "true" ]]; then
-                    echo "⏳ Starting dry-run rebase..."
-                    git checkout --detach "origin/$BRANCH" --quiet
-                    
-                    if git rebase --onto "$LATEST_TAG" "$OLD_BASE" HEAD >/dev/null 2>&1; then
-                      echo "✅ Dry-run rebase of $BRANCH onto $LATEST_TAG succeeded."
-                    else
-                      git rebase --abort || true
-                      echo "::error::Dry-run rebase of $BRANCH onto $LATEST_TAG has CONFLICTS."
-                      FAILED_BRANCHES+=("$BRANCH")
-                    fi
-                    
-                    git reset --hard HEAD --quiet
-                    continue
-                  fi
-
-                  # ================= FULL MODE (Create PR) =================
-                  echo "⏳ Starting full rebase and PR creation..."
-                  git checkout -B "$CANDIDATE" "origin/$BRANCH" --quiet
-                  
-                  if git rebase --onto "$LATEST_TAG" "$OLD_BASE" "$CANDIDATE" >/dev/null 2>&1; then
-                    git push origin "$CANDIDATE" --force --quiet
-                    PR_TITLE="[Auto-rebase] $BRANCH → $LATEST_TAG"
-                    PR_DESC="### 🤖 Automated Rebase PR
-                
-                **Type:** Auto-rebase
-                **Branch:** $BRANCH
-                **Previous Base:** $OLD_BASE
-                **Upstream Tag:** $LATEST_TAG
-                
-                ---
-                ⚠️ **DO NOT MERGE MANUALLY**
-                1. Wait for checks to pass.
-                2. Use the **Apply Rebase** pipeline to finalize."
-                  else
-                    git rebase --abort || true
-                    git checkout -B "$CANDIDATE" "origin/$BRANCH" --quiet
-                    git push origin "$CANDIDATE" --force --quiet
-                    
-                    PR_TITLE="[Auto-rebase CONFLICT] $BRANCH → $LATEST_TAG"
-                    PR_DESC="### ⚠️ Rebase Conflict — Manual Fix Required
-                
-                **Type:** Manual resolution
-                **Branch:** $BRANCH
-                **Previous Base:** $OLD_BASE
-                **Upstream Tag:** $LATEST_TAG
-                **Base Commit:** ${CURRENT_SHA}
-                
-                Rebase failed with conflicts. Please:
-                1. \`git fetch origin && git checkout $CANDIDATE\`
-                2. \`git rebase --onto $LATEST_TAG $OLD_BASE\`
-                3. Resolve conflicts, then \`git push origin $CANDIDATE --force\`
-                4. CI will re-run tests automatically."
-                    
-                    FAILED_BRANCHES+=("$BRANCH")
-                  fi
-
-                  PR_DESC_ESCAPED=$(printf '%s' "$PR_DESC" | sed ':a;N;$!ba;s/\n/\\n/g')
-
-                  curl --insecure -sS -X POST \
-                    -H "Authorization: Bearer $SOURCECRAFT_TOKEN" \
-                    -H "Content-Type: application/json" \
-                    -d "{
-                      \"source_branch\": \"$CANDIDATE\",
-                      \"target_branch\": \"$BRANCH\",
-                      \"title\": \"$PR_TITLE\",
-                      \"description\": \"$PR_DESC_ESCAPED\",
-                      \"publish\": true
-                    }" \
-                    "https://public-api.o.cloud.yandex.net/repos/yc/clickhouse/pulls"
-
-                  echo "✅ PR created: $PR_TITLE"
-                  git checkout --detach HEAD --quiet
-                done
-
-                # ================= FINALIZE =================
-                if [[ ${#FAILED_BRANCHES[@]} -gt 0 ]]; then
-                  echo -e "\n❌ The following branches have rebase conflicts:\n"
-                  for fb in "${FAILED_BRANCHES[@]}"; do echo "  - $fb"; done
-                  
-                  if [[ "$CREATE_PR" == "true" ]]; then
-                    echo "::error::PRs created for conflicting branches. Manual resolution required."
-                  else
-                    echo "::error::Dry-run conflicts detected. Manual intervention required before creating PRs."
-                  fi
-                  exit 1
-                fi
-
-                echo -e "\n✅ All branches processed successfully."
+              - bash .sourcecraft/scripts/auto_rebase_check.sh
 
   do_rebase_poller:
     tasks:
@@ -910,8 +424,7 @@ workflows:
             script:
               - |
                 set -ex
-                git clone --depth=1 --branch yc/master \
-                  https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git .
+                git clone --depth=1 --branch yc/master $CLICKHOUSE_REPO_URL .
 
           - name: run-poller
             script:
@@ -929,16 +442,13 @@ workflows:
           GIT_SSL_NO_VERIFY: 1
         cubes:
           - name: configure-git
-            script:
-              - |
-                git config --global user.name 'CI Bot'
-                git config --global user.email 'cibot@example.com'
+            uses: configure-git
           
           - name: checkout
             script:
               - |
                 set -ex
-                git clone --branch yc/master https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git .
+                git clone --depth=1 --branch yc/master $CLICKHOUSE_REPO_URL .
                 git checkout $SOURCECRAFT_COMMIT_REF
 
           - name: fast_test
@@ -1006,12 +516,8 @@ workflows:
         env:
           GIT_SSL_NO_VERIFY: 1
         cubes:
-          - name: configure-git
-            uses: configure-git
-          - name: checkout
-            uses: checkout-shallow
-          - name: download_amd_debug
-            uses: download_amd_debug
+          - name: setup-stateless-test
+            uses: setup-stateless-test
           - name: run
             script:
               - python3 -m ci.praktika run "Stateless tests (amd_debug, distributed plan, s3 storage, parallel)"
@@ -1023,12 +529,8 @@ workflows:
         env:
           GIT_SSL_NO_VERIFY: 1
         cubes:
-          - name: configure-git
-            uses: configure-git
-          - name: checkout
-            uses: checkout-shallow
-          - name: download_amd_debug
-            uses: download_amd_debug
+          - name: setup-stateless-test
+            uses: setup-stateless-test
           - name: run
             script:
               - python3 -m ci.praktika run "Stateless tests (amd_debug, distributed plan, s3 storage, sequential)"
@@ -1040,12 +542,8 @@ workflows:
         env:
           GIT_SSL_NO_VERIFY: 1
         cubes:
-          - name: configure-git
-            uses: configure-git
-          - name: checkout
-            uses: checkout-shallow
-          - name: download_amd_debug
-            uses: download_amd_debug
+          - name: setup-stateless-test
+            uses: setup-stateless-test
           - name: run
             script:
               - python3 -m ci.praktika run "Stateless tests (amd_debug, AsyncInsert, s3 storage, parallel)"
@@ -1057,12 +555,8 @@ workflows:
         env:
           GIT_SSL_NO_VERIFY: 1
         cubes:
-          - name: configure-git
-            uses: configure-git
-          - name: checkout
-            uses: checkout-shallow
-          - name: download_amd_debug
-            uses: download_amd_debug
+          - name: setup-stateless-test
+            uses: setup-stateless-test
           - name: run
             script:
               - python3 -m ci.praktika run "Stateless tests (amd_debug, AsyncInsert, s3 storage, sequential)"
@@ -1074,12 +568,8 @@ workflows:
         env:
           GIT_SSL_NO_VERIFY: 1
         cubes:
-          - name: configure-git
-            uses: configure-git
-          - name: checkout
-            uses: checkout-shallow
-          - name: download_amd_debug
-            uses: download_amd_debug
+          - name: setup-stateless-test
+            uses: setup-stateless-test
           - name: run
             script:
               - python3 -m ci.praktika run "Stateless tests (amd_debug, parallel)"
@@ -1119,22 +609,7 @@ workflows:
             uses: download_amd_binary
           - name: run
             script:
-              - set +e
-              - python3 -m ci.praktika run "Integration tests (amd_binary, 1/5)"
-              - ret="$?"
-              - set -e
-              - |
-                if [ "$ret" -ne 0 ]; then
-                  tar czf ci/tmp/integration-logs.tar.gz \
-                    --ignore-failed-read \
-                    ci/tmp/*.log ci/tmp/*.jsonl ci/tmp/*.json \
-                    tests/integration/test_*/_instances* \
-                    2>/dev/null || true
-                  s3cmd --config /etc/s3cmd/bucket.conf put ci/tmp/integration-logs.tar.gz \
-                    s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/integration-tests-1/ || true
-                  echo "Integration tests failed"
-                  exit 1
-                fi
+              - bash .sourcecraft/scripts/run_integration_test.sh 1
 
       - name: integration-tests-2
         runs_on: [self-hosted, medium]
@@ -1153,22 +628,7 @@ workflows:
             uses: download_amd_binary
           - name: run
             script:
-              - set +e
-              - python3 -m ci.praktika run "Integration tests (amd_binary, 2/5)"
-              - ret="$?"
-              - set -e
-              - |
-                if [ "$ret" -ne 0 ]; then
-                  tar czf ci/tmp/integration-logs.tar.gz \
-                    --ignore-failed-read \
-                    ci/tmp/*.log ci/tmp/*.jsonl ci/tmp/*.json \
-                    tests/integration/test_*/_instances* \
-                    2>/dev/null || true
-                  s3cmd --config /etc/s3cmd/bucket.conf put ci/tmp/integration-logs.tar.gz \
-                    s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/integration-tests-2/ || true
-                  echo "Integration tests failed"
-                  exit 1
-                fi
+              - bash .sourcecraft/scripts/run_integration_test.sh 2
 
       - name: integration-tests-3
         runs_on: [self-hosted, medium]
@@ -1187,22 +647,7 @@ workflows:
             uses: download_amd_binary
           - name: run
             script:
-              - set +e
-              - python3 -m ci.praktika run "Integration tests (amd_binary, 3/5)"
-              - ret="$?"
-              - set -e
-              - |
-                if [ "$ret" -ne 0 ]; then
-                  tar czf ci/tmp/integration-logs.tar.gz \
-                    --ignore-failed-read \
-                    ci/tmp/*.log ci/tmp/*.jsonl ci/tmp/*.json \
-                    tests/integration/test_*/_instances* \
-                    2>/dev/null || true
-                  s3cmd --config /etc/s3cmd/bucket.conf put ci/tmp/integration-logs.tar.gz \
-                    s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/integration-tests-3/ || true
-                  echo "Integration tests failed"
-                  exit 1
-                fi
+              - bash .sourcecraft/scripts/run_integration_test.sh 3
 
       - name: integration-tests-4
         runs_on: [self-hosted, medium]
@@ -1221,22 +666,7 @@ workflows:
             uses: download_amd_binary
           - name: run
             script:
-              - set +e
-              - python3 -m ci.praktika run "Integration tests (amd_binary, 4/5)"
-              - ret="$?"
-              - set -e
-              - |
-                if [ "$ret" -ne 0 ]; then
-                  tar czf ci/tmp/integration-logs.tar.gz \
-                    --ignore-failed-read \
-                    ci/tmp/*.log ci/tmp/*.jsonl ci/tmp/*.json \
-                    tests/integration/test_*/_instances* \
-                    2>/dev/null || true
-                  s3cmd --config /etc/s3cmd/bucket.conf put ci/tmp/integration-logs.tar.gz \
-                    s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/integration-tests-4/ || true
-                  echo "Integration tests failed"
-                  exit 1
-                fi
+              - bash .sourcecraft/scripts/run_integration_test.sh 4
 
       - name: integration-tests-5
         runs_on: [self-hosted, medium]
@@ -1255,19 +685,4 @@ workflows:
             uses: download_amd_binary
           - name: run
             script:
-              - set +e
-              - python3 -m ci.praktika run "Integration tests (amd_binary, 5/5)"
-              - ret="$?"
-              - set -e
-              - |
-                if [ "$ret" -ne 0 ]; then
-                  tar czf ci/tmp/integration-logs.tar.gz \
-                    --ignore-failed-read \
-                    ci/tmp/*.log ci/tmp/*.jsonl ci/tmp/*.json \
-                    tests/integration/test_*/_instances* \
-                    2>/dev/null || true
-                  s3cmd --config /etc/s3cmd/bucket.conf put ci/tmp/integration-logs.tar.gz \
-                    s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/integration-tests-5/ || true
-                  echo "Integration tests failed"
-                  exit 1
-                fi
+              - bash .sourcecraft/scripts/run_integration_test.sh 5

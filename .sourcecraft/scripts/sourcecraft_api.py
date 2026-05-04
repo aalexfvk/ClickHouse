@@ -81,7 +81,7 @@ class SourceCraftClient:
                 return json.loads(resp.read())
         except urllib.error.HTTPError as exc:
             text = exc.read().decode(errors="replace")
-            print(f"  ⚠️  HTTP {exc.code} {method} {url}: {text}", file=sys.stderr)
+            print(f"HTTP {exc.code} {method} {url}: {text}", file=sys.stderr)
             return {}
 
     def _repo_path(self, suffix: str = "") -> str:
@@ -106,6 +106,29 @@ class SourceCraftClient:
             if not page_token:
                 break
         return pulls
+
+    def create_pull_request(
+        self,
+        source_branch: str,
+        target_branch: str,
+        title: str,
+        description: str = "",
+        publish: bool = True,
+    ) -> str:
+        """
+        Create a new pull request.
+        Returns the PR slug (or '<unknown>' on failure).
+        """
+        body: dict[str, Any] = {
+            "source_branch": source_branch,
+            "target_branch": target_branch,
+            "title": title,
+            "publish": publish,
+        }
+        if description:
+            body["description"] = description
+        resp = self._request("POST", self._repo_path("/pulls"), body)
+        return resp.get("slug", "<unknown>")
 
     def create_pull_request_comment(self, pr_slug: str, text: str) -> str:
         """
