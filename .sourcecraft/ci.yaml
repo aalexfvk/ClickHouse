@@ -251,6 +251,7 @@ workflows:
         description: 'Name of the new YC release branch (e.g. yc/25.12). Auto-generated from upstream_tag if not set.'
         required: false
         type: string
+        default: ''
 
     tasks:
       - name: init-branch
@@ -474,7 +475,7 @@ workflows:
         description: 'Create candidate branch and PR (true = full rebase + PR, false = dry-run check only)'
         required: false
         default: 'false'
-        type: string
+        options: ['false', 'true']
 
     tasks:
       - name: rebase-check
@@ -497,7 +498,7 @@ workflows:
 
           - name: run-rebase-loop
             script:
-              - bash .sourcecraft/scripts/auto_rebase_check.sh
+              - python3 .sourcecraft/scripts/auto_rebase_check.py
 
   do_rebase_poller:
     tasks:
