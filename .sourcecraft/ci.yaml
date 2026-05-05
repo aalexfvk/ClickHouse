@@ -1,5 +1,4 @@
 env:
-  CLICKHOUSE_REPO_URL: https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git
   CLICKHOUSE_UPSTREAM_REPO_URL: https://github.com/ClickHouse/ClickHouse.git
 
 cubes:
@@ -8,6 +7,7 @@ cubes:
       - |
         git config --global user.name 'CI Bot'
         git config --global user.email 'cibot@example.com'
+        echo "CLICKHOUSE_REPO_URL=https://git:$SOURCECRAFT_TOKEN@git.o.cloud.yandex.net/yc/clickhouse.git" >> $SOURCECRAFT_ENV
   - name: checkout
     env:
       GIT_SSL_NO_VERIFY: 1
@@ -22,20 +22,15 @@ cubes:
       - |
         set -ex
         git clone --branch $SOURCECRAFT_COMMIT_REF_NAME --depth=1 $CLICKHOUSE_REPO_URL .
-  - name: setup-stateless-test
-    uses:
-      - configure-git
-      - checkout-shallow
-      - download_amd_debug
-  - name: download_amd_debug
+
+  # Parameterized cube for downloading a pre-built binary from S3.
+  # Override BUILD_TYPE (e.g. amd_debug, amd_binary, amd_release) when using.
+  - name: download-binary
+    env:
+      BUILD_TYPE: ""
     script:
-      - s3cmd --config /etc/s3cmd/bucket.conf get s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/amd_debug/clickhouse
-  - name: download_amd_binary
-    script:
-      - s3cmd --config /etc/s3cmd/bucket.conf get s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/amd_binary/clickhouse
-  - name: download-binary-amd_release
-    script:
-      - s3cmd --config /etc/s3cmd/bucket.conf get s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/amd_release/clickhouse
+      - s3cmd --config /etc/s3cmd/bucket.conf get s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/$BUILD_TYPE/clickhouse
+
   - name: setup-sccache
     script:
       - |
@@ -65,6 +60,102 @@ cubes:
         echo "SCCACHE_S3_USE_SSL=true" >> $SOURCECRAFT_ENV
         echo "SCCACHE_IDLE_TIMEOUT=7200" >> $SOURCECRAFT_ENV
         set -x
+
+  # Parameterized cube for building and uploading a binary.
+  # Override BUILD_TYPE (e.g. amd_debug, amd_binary) when using.
+  # The praktika job name is derived as "Build ($BUILD_TYPE)".
+  - name: build-and-upload
+    env:
+      BUILD_TYPE: ""
+      CLICKHOUSE_BINARY_PATH: ci/tmp/build/programs/self-extracting/clickhouse
+    script:
+      - |
+        python3 -m ci.praktika run "Build ($BUILD_TYPE)" --sccache
+        ls ci/tmp/build/programs/
+      - s3cmd --config /etc/s3cmd/bucket.conf put $CLICKHOUSE_BINARY_PATH s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/$BUILD_TYPE/clickhouse
+      - ls -lah
+
+  # Parameterized cube for running one integration test batch.
+  # Override INTEGRATION_BATCH when using.
+  - name: run-integration-test
+    env:
+      INTEGRATION_BATCH: ""
+    script:
+      - bash .sourcecraft/scripts/run_integration_test.sh $INTEGRATION_BATCH
+
+  # Parameterized cube for running a stateless test suite.
+  # Override STATELESS_TEST_NAME when using.
+  - name: run-stateless-test
+    env:
+      STATELESS_TEST_NAME: ""
+    script:
+      - python3 -m ci.praktika run "$STATELESS_TEST_NAME"
+
+# Reusable task templates.
+tasks:
+  # Template for build tasks. Override BUILD_TYPE via env when referencing with uses.
+  - name: build-task
+    runs_on: [self-hosted, large]
+    checkout:
+      enabled: false
+    env:
+      GIT_SSL_NO_VERIFY: 1
+      BUILD_TYPE: ""
+    cubes:
+      - name: configure-git
+        uses: configure-git
+      - name: checkout
+        uses: checkout-shallow
+      - name: setup-sccache
+        uses: setup-sccache
+      - name: build-and-upload
+        env:
+          BUILD_TYPE: $BUILD_TYPE
+        uses: build-and-upload
+
+  # Template for stateless test tasks. Override STATELESS_TEST_NAME via env when referencing with uses.
+  - name: stateless-test
+    checkout:
+      enabled: false
+    env:
+      GIT_SSL_NO_VERIFY: 1
+      STATELESS_TEST_NAME: ""
+    cubes:
+      - name: configure-git
+        uses: configure-git
+      - name: checkout
+        uses: checkout-shallow
+      - name: download-binary
+        env:
+          BUILD_TYPE: amd_debug
+        uses: download-binary
+      - name: run
+        env:
+          STATELESS_TEST_NAME: $STATELESS_TEST_NAME
+        uses: run-stateless-test
+
+  # Template for integration test batches. Override INTEGRATION_BATCH via env when referencing with uses.
+  - name: integration-test-batch
+    runs_on: [self-hosted, medium]
+    checkout:
+      enabled: false
+    env:
+      GIT_SSL_NO_VERIFY: 1
+      TEST_SESSION_TIMEOUT: 10800
+      INTEGRATION_BATCH: ""
+    cubes:
+      - name: configure-git
+        uses: configure-git
+      - name: checkout
+        uses: checkout-shallow
+      - name: download-binary
+        env:
+          BUILD_TYPE: amd_binary
+        uses: download-binary
+      - name: run
+        env:
+          INTEGRATION_BATCH: $INTEGRATION_BATCH
+        uses: run-integration-test
 
 on:
   schedule:
@@ -420,6 +511,8 @@ workflows:
           REPO_SLUG: clickhouse
           REBASE_LABEL: do-rebase
         cubes:
+          - name: configure-git
+            uses: configure-git
           - name: clone-repo
             script:
               - |
@@ -460,229 +553,95 @@ workflows:
     settings:
       max_cube_duration: 6h
     tasks:
-      - name: build_amd_debug
-        runs_on: [self-hosted, large]
+      - name: style-check
         checkout:
           enabled: false
         env:
           GIT_SSL_NO_VERIFY: 1
-          CLICKHOUSE_BINARY_PATH: ci/tmp/build/programs/self-extracting/clickhouse
         cubes:
           - name: configure-git
             uses: configure-git
           - name: checkout
             uses: checkout-shallow
-          - name: setup-sccache
-            uses: setup-sccache
           - name: style-check
             script:
               - python3 -m ci.praktika run "Style check"
-          - name: build-debug
-            script:
-               - python3 -m ci.praktika run "Build (amd_debug)" --sccache
-               - ls ci/tmp/build/programs/
-          - name: upload-binary
-            script:
-              - s3cmd --config /etc/s3cmd/bucket.conf put $CLICKHOUSE_BINARY_PATH s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/amd_debug/clickhouse
-              - ls -lah
+
+      - name: build_amd_debug
+        uses: build-task
+        needs: [style-check]
+        env:
+          BUILD_TYPE: amd_debug
 
       - name: build_amd_binary
-        runs_on: [self-hosted, large]
-        checkout:
-          enabled: false
+        uses: build-task
+        needs: [style-check]
         env:
-          GIT_SSL_NO_VERIFY: 1
-          CLICKHOUSE_BINARY_PATH: ci/tmp/build/programs/self-extracting/clickhouse
-        cubes:
-          - name: configure-git
-            uses: configure-git
-          - name: checkout
-            uses: checkout-shallow
-          - name: setup-sccache
-            uses: setup-sccache
-          - name: build_amd_binary
-            script:
-               - python3 -m ci.praktika run "Build (amd_binary)" --sccache
-               - ls ci/tmp/build/programs/
-          - name: upload-binary
-            script:
-              - s3cmd --config /etc/s3cmd/bucket.conf put $CLICKHOUSE_BINARY_PATH s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/amd_binary/clickhouse
-              - ls -lah
+          BUILD_TYPE: amd_binary
 
       - name: stateless-tests-debug-distributed-plan-s3-parallel
+        uses: stateless-test
         needs: [build_amd_debug]
-        checkout:
-          enabled: false
         env:
-          GIT_SSL_NO_VERIFY: 1
-        cubes:
-          - name: setup-stateless-test
-            uses: setup-stateless-test
-          - name: run
-            script:
-              - python3 -m ci.praktika run "Stateless tests (amd_debug, distributed plan, s3 storage, parallel)"
+          STATELESS_TEST_NAME: "Stateless tests (amd_debug, distributed plan, s3 storage, parallel)"
 
       - name: stateless-tests-debug-distributed-plan-s3-sequential
+        uses: stateless-test
         needs: [build_amd_debug]
-        checkout:
-          enabled: false
         env:
-          GIT_SSL_NO_VERIFY: 1
-        cubes:
-          - name: setup-stateless-test
-            uses: setup-stateless-test
-          - name: run
-            script:
-              - python3 -m ci.praktika run "Stateless tests (amd_debug, distributed plan, s3 storage, sequential)"
+          STATELESS_TEST_NAME: "Stateless tests (amd_debug, distributed plan, s3 storage, sequential)"
 
       - name: stateless-tests-debug-async-insert-s3-parallel
+        uses: stateless-test
         needs: [build_amd_debug]
-        checkout:
-          enabled: false
         env:
-          GIT_SSL_NO_VERIFY: 1
-        cubes:
-          - name: setup-stateless-test
-            uses: setup-stateless-test
-          - name: run
-            script:
-              - python3 -m ci.praktika run "Stateless tests (amd_debug, AsyncInsert, s3 storage, parallel)"
+          STATELESS_TEST_NAME: "Stateless tests (amd_debug, AsyncInsert, s3 storage, parallel)"
 
       - name: stateless-tests-debug-async-insert-s3-sequential
+        uses: stateless-test
         needs: [build_amd_debug]
-        checkout:
-          enabled: false
         env:
-          GIT_SSL_NO_VERIFY: 1
-        cubes:
-          - name: setup-stateless-test
-            uses: setup-stateless-test
-          - name: run
-            script:
-              - python3 -m ci.praktika run "Stateless tests (amd_debug, AsyncInsert, s3 storage, sequential)"
+          STATELESS_TEST_NAME: "Stateless tests (amd_debug, AsyncInsert, s3 storage, sequential)"
 
       - name: stateless-tests-debug-parallel
+        uses: stateless-test
         needs: [build_amd_debug]
-        checkout:
-          enabled: false
         env:
-          GIT_SSL_NO_VERIFY: 1
-        cubes:
-          - name: setup-stateless-test
-            uses: setup-stateless-test
-          - name: run
-            script:
-              - python3 -m ci.praktika run "Stateless tests (amd_debug, parallel)"
+          STATELESS_TEST_NAME: "Stateless tests (amd_debug, parallel)"
 
       # Reason: Fails on azure_cache related tests, because azurit is not started for local tests
       # - name: stateless-tests-debug-sequential
+      #   uses: stateless-test
       #   needs: [build_amd_debug]
-      #   checkout:
-      #     enabled: false
       #   env:
-      #     GIT_SSL_NO_VERIFY: 1
-      #   cubes:
-      #     - name: configure-git
-      #       uses: configure-git
-      #     - name: checkout
-      #       uses: checkout
-      #     - name: download_amd_debug
-      #       uses: download_amd_debug
-      #     - name: run
-      #       script:
-      #         - python3 -m ci.praktika run "Stateless tests (amd_debug, sequential)"
+      #     STATELESS_TEST_NAME: "Stateless tests (amd_debug, sequential)"
 
       - name: integration-tests-1
-        runs_on: [self-hosted, medium]
+        uses: integration-test-batch
         needs: [build_amd_binary]
-        checkout:
-          enabled: false
         env:
-          GIT_SSL_NO_VERIFY: 1
-          TEST_SESSION_TIMEOUT: 10800
-        cubes:
-          - name: configure-git
-            uses: configure-git
-          - name: checkout
-            uses: checkout-shallow
-          - name: download_amd_binary
-            uses: download_amd_binary
-          - name: run
-            script:
-              - bash .sourcecraft/scripts/run_integration_test.sh 1
+          INTEGRATION_BATCH: 1
 
       - name: integration-tests-2
-        runs_on: [self-hosted, medium]
+        uses: integration-test-batch
         needs: [build_amd_binary]
-        checkout:
-          enabled: false
         env:
-          GIT_SSL_NO_VERIFY: 1
-          TEST_SESSION_TIMEOUT: 10800
-        cubes:
-          - name: configure-git
-            uses: configure-git
-          - name: checkout
-            uses: checkout-shallow
-          - name: download_amd_binary
-            uses: download_amd_binary
-          - name: run
-            script:
-              - bash .sourcecraft/scripts/run_integration_test.sh 2
+          INTEGRATION_BATCH: 2
 
       - name: integration-tests-3
-        runs_on: [self-hosted, medium]
+        uses: integration-test-batch
         needs: [build_amd_binary]
-        checkout:
-          enabled: false
         env:
-          GIT_SSL_NO_VERIFY: 1
-          TEST_SESSION_TIMEOUT: 10800
-        cubes:
-          - name: configure-git
-            uses: configure-git
-          - name: checkout
-            uses: checkout-shallow
-          - name: download_amd_binary
-            uses: download_amd_binary
-          - name: run
-            script:
-              - bash .sourcecraft/scripts/run_integration_test.sh 3
+          INTEGRATION_BATCH: 3
 
       - name: integration-tests-4
-        runs_on: [self-hosted, medium]
+        uses: integration-test-batch
         needs: [build_amd_binary]
-        checkout:
-          enabled: false
         env:
-          GIT_SSL_NO_VERIFY: 1
-          TEST_SESSION_TIMEOUT: 10800
-        cubes:
-          - name: configure-git
-            uses: configure-git
-          - name: checkout
-            uses: checkout-shallow
-          - name: download_amd_binary
-            uses: download_amd_binary
-          - name: run
-            script:
-              - bash .sourcecraft/scripts/run_integration_test.sh 4
+          INTEGRATION_BATCH: 4
 
       - name: integration-tests-5
-        runs_on: [self-hosted, medium]
+        uses: integration-test-batch
         needs: [build_amd_binary]
-        checkout:
-          enabled: false
         env:
-          GIT_SSL_NO_VERIFY: 1
-          TEST_SESSION_TIMEOUT: 10800
-        cubes:
-          - name: configure-git
-            uses: configure-git
-          - name: checkout
-            uses: checkout-shallow
-          - name: download_amd_binary
-            uses: download_amd_binary
-          - name: run
-            script:
-              - bash .sourcecraft/scripts/run_integration_test.sh 5
+          INTEGRATION_BATCH: 5
