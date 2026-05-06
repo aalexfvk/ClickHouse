@@ -15,7 +15,7 @@ if [ -z "$EXPECTED_SHA" ]; then
 fi
 
 git fetch origin "$CANDIDATE"
-CANDIDATE_SHA=$(git rev-parse "origin/$CANDIDATE")
+CANDIDATE_SHA=$(git rev-parse FETCH_HEAD)
 
 echo "🚀 Attempting safe push with force-with-lease..."
 echo "  Target Ref: refs/heads/$TARGET"

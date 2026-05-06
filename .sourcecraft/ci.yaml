@@ -15,6 +15,7 @@ cubes:
       - |
         set -ex
         git clone --branch $SOURCECRAFT_COMMIT_REF_NAME $CLICKHOUSE_REPO_URL .
+        git fetch --tags --quiet
   - name: checkout-shallow
     env:
       GIT_SSL_NO_VERIFY: 1
@@ -96,8 +97,6 @@ tasks:
   # Template for build tasks. Override BUILD_TYPE via env when referencing with uses.
   - name: build-task
     runs_on: [self-hosted, large]
-    checkout:
-      enabled: false
     env:
       GIT_SSL_NO_VERIFY: 1
       BUILD_TYPE: ""
@@ -109,14 +108,10 @@ tasks:
       - name: setup-sccache
         uses: setup-sccache
       - name: build-and-upload
-        env:
-          BUILD_TYPE: $BUILD_TYPE
         uses: build-and-upload
 
   # Template for stateless test tasks. Override STATELESS_TEST_NAME via env when referencing with uses.
   - name: stateless-test
-    checkout:
-      enabled: false
     env:
       GIT_SSL_NO_VERIFY: 1
       STATELESS_TEST_NAME: ""
@@ -130,15 +125,11 @@ tasks:
           BUILD_TYPE: amd_debug
         uses: download-binary
       - name: run
-        env:
-          STATELESS_TEST_NAME: $STATELESS_TEST_NAME
         uses: run-stateless-test
 
   # Template for integration test batches. Override INTEGRATION_BATCH via env when referencing with uses.
   - name: integration-test-batch
     runs_on: [self-hosted, medium]
-    checkout:
-      enabled: false
     env:
       GIT_SSL_NO_VERIFY: 1
       TEST_SESSION_TIMEOUT: 10800
@@ -181,6 +172,17 @@ on:
 
 
 workflows:
+  dummy:
+    tasks:
+      - name: dummy
+        cubes:
+          - name: dummy
+            env:
+              GIT_SSL_NO_VERIFY: 1
+            script:
+              - echo "Current_dir $(pwd)"
+              - bash ls -lah
+
   sync_upstream:
     tasks:
       - name: sync-upstream
@@ -489,12 +491,8 @@ workflows:
           - name: configure-git
             uses: configure-git
 
-          - name: clone-repo
-            script:
-              - |
-                set -euo pipefail
-                git clone $CLICKHOUSE_REPO_URL .
-                git fetch --tags --quiet
+          - name: checkout
+            uses: checkout
 
           - name: run-rebase-loop
             script:
@@ -571,42 +569,56 @@ workflows:
       - name: build_amd_debug
         uses: build-task
         needs: [style-check]
+        checkout:
+          enabled: false
         env:
           BUILD_TYPE: amd_debug
 
       - name: build_amd_binary
         uses: build-task
         needs: [style-check]
+        checkout:
+          enabled: false
         env:
           BUILD_TYPE: amd_binary
 
       - name: stateless-tests-debug-distributed-plan-s3-parallel
         uses: stateless-test
         needs: [build_amd_debug]
+        checkout:
+          enabled: false
         env:
           STATELESS_TEST_NAME: "Stateless tests (amd_debug, distributed plan, s3 storage, parallel)"
 
       - name: stateless-tests-debug-distributed-plan-s3-sequential
         uses: stateless-test
         needs: [build_amd_debug]
+        checkout:
+          enabled: false
         env:
           STATELESS_TEST_NAME: "Stateless tests (amd_debug, distributed plan, s3 storage, sequential)"
 
       - name: stateless-tests-debug-async-insert-s3-parallel
         uses: stateless-test
         needs: [build_amd_debug]
+        checkout:
+          enabled: false
         env:
           STATELESS_TEST_NAME: "Stateless tests (amd_debug, AsyncInsert, s3 storage, parallel)"
 
       - name: stateless-tests-debug-async-insert-s3-sequential
         uses: stateless-test
         needs: [build_amd_debug]
+        checkout:
+          enabled: false
         env:
           STATELESS_TEST_NAME: "Stateless tests (amd_debug, AsyncInsert, s3 storage, sequential)"
 
       - name: stateless-tests-debug-parallel
         uses: stateless-test
         needs: [build_amd_debug]
+        checkout:
+          enabled: false
         env:
           STATELESS_TEST_NAME: "Stateless tests (amd_debug, parallel)"
 
@@ -620,29 +632,39 @@ workflows:
       - name: integration-tests-1
         uses: integration-test-batch
         needs: [build_amd_binary]
+        checkout:
+          enabled: false
         env:
           INTEGRATION_BATCH: 1
 
       - name: integration-tests-2
         uses: integration-test-batch
         needs: [build_amd_binary]
+        checkout:
+          enabled: false
         env:
           INTEGRATION_BATCH: 2
 
       - name: integration-tests-3
         uses: integration-test-batch
         needs: [build_amd_binary]
+        checkout:
+          enabled: false
         env:
           INTEGRATION_BATCH: 3
 
       - name: integration-tests-4
         uses: integration-test-batch
         needs: [build_amd_binary]
+        checkout:
+          enabled: false
         env:
           INTEGRATION_BATCH: 4
 
       - name: integration-tests-5
         uses: integration-test-batch
         needs: [build_amd_binary]
+        checkout:
+          enabled: false
         env:
           INTEGRATION_BATCH: 5
