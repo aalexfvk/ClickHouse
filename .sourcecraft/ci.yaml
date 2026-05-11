@@ -28,7 +28,7 @@ cubes:
   # Override BUILD_TYPE (e.g. amd_debug, amd_binary, amd_release) when using.
   - name: download-binary
     env:
-      BUILD_TYPE: ""
+      BUILD_TYPE: ${{ env.BUILD_TYPE }}
     script:
       - s3cmd --config /etc/s3cmd/bucket.conf get s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/$BUILD_TYPE/clickhouse
 
@@ -67,7 +67,7 @@ cubes:
   # The praktika job name is derived as "Build ($BUILD_TYPE)".
   - name: build-and-upload
     env:
-      BUILD_TYPE: ""
+      BUILD_TYPE: ${{ env.BUILD_TYPE }}
       CLICKHOUSE_BINARY_PATH: ci/tmp/build/programs/self-extracting/clickhouse
     script:
       - |
@@ -80,7 +80,7 @@ cubes:
   # Override INTEGRATION_BATCH when using.
   - name: run-integration-test
     env:
-      INTEGRATION_BATCH: ""
+      INTEGRATION_BATCH: ${{ env.INTEGRATION_BATCH }}
     script:
       - bash .sourcecraft/scripts/run_integration_test.sh $INTEGRATION_BATCH
 
@@ -88,7 +88,7 @@ cubes:
   # Override STATELESS_TEST_NAME when using.
   - name: run-stateless-test
     env:
-      STATELESS_TEST_NAME: ""
+      STATELESS_TEST_NAME: ${{ env.STATELESS_TEST_NAME }}
     script:
       - python3 -m ci.praktika run "$STATELESS_TEST_NAME"
 
@@ -99,30 +99,29 @@ tasks:
     runs_on: [self-hosted, large]
     env:
       GIT_SSL_NO_VERIFY: 1
-      BUILD_TYPE: ""
+      BUILD_TYPE: "Unknown"
     cubes:
       - name: configure-git
         uses: configure-git
       - name: checkout
         uses: checkout-shallow
-      - name: setup-sccache
-        uses: setup-sccache
+      # - name: setup-sccache  # TODO: restore sccache
+      #   uses: setup-sccache
       - name: build-and-upload
         uses: build-and-upload
 
   # Template for stateless test tasks. Override STATELESS_TEST_NAME via env when referencing with uses.
   - name: stateless-test
     env:
-      GIT_SSL_NO_VERIFY: 1
-      STATELESS_TEST_NAME: ""
+      GIT_SSL_NO_VERIFY: 1      
+      BUILD_TYPE: amd_debug
+      STATELESS_TEST_NAME: "Unknown"
     cubes:
       - name: configure-git
         uses: configure-git
       - name: checkout
         uses: checkout-shallow
-      - name: download-binary
-        env:
-          BUILD_TYPE: amd_debug
+      - name: download-binary        
         uses: download-binary
       - name: run
         uses: run-stateless-test
@@ -133,19 +132,16 @@ tasks:
     env:
       GIT_SSL_NO_VERIFY: 1
       TEST_SESSION_TIMEOUT: 10800
-      INTEGRATION_BATCH: ""
+      BUILD_TYPE: amd_binary
+      INTEGRATION_BATCH: "Unknown"
     cubes:
       - name: configure-git
         uses: configure-git
       - name: checkout
         uses: checkout-shallow
-      - name: download-binary
-        env:
-          BUILD_TYPE: amd_binary
+      - name: download-binary         
         uses: download-binary
       - name: run
-        env:
-          INTEGRATION_BATCH: $INTEGRATION_BATCH
         uses: run-integration-test
 
 on:
