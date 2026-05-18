@@ -454,7 +454,6 @@ static void convertOrdinaryDatabaseToAtomic(LoggerPtr log, ContextMutablePtr con
         auto drop_query_context = Context::createCopy(context);
         drop_query_context->makeQueryContext();
         drop_query_context->setCurrentQueryId("");
-        drop_query_context->setSetting("force_remove_data_recursively_on_drop", false);
 
         CurrentThread::QueryScope query_scope;
         if (!CurrentThread::getGroup())
