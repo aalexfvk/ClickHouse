@@ -15,6 +15,7 @@
 #include <Core/Settings.h>
 #include <DataTypes/DataTypeAggregateFunction.h>
 #include <DataTypes/NestedUtils.h>
+#include <IO/S3/getObjectInfo.h>
 #include <IO/HashingWriteBuffer.h>
 #include <IO/ReadBufferFromString.h>
 #include <IO/ReadHelpers.h>
@@ -2455,20 +2456,40 @@ DataPartStoragePtr IMergeTreeDataPart::makeCloneInDetached(const String & prefix
     /// In case of zero-copy replication we copy directory instead of hardlinks
     /// because hardlinks tracking doesn't work for detached parts.
     auto storage_settings = storage.getSettings();
+    bool copy_instead_of_hardlink = isStoredOnRemoteDiskWithZeroCopySupport() && storage.supportsReplication() && (*storage_settings)[MergeTreeSetting::allow_remote_fs_zero_copy_replication];
+
     IDataPartStorage::ClonePartParams params
     {
-        .copy_instead_of_hardlink = isStoredOnRemoteDiskWithZeroCopySupport() && storage.supportsReplication() && (*storage_settings)[MergeTreeSetting::allow_remote_fs_zero_copy_replication],
+        .copy_instead_of_hardlink = copy_instead_of_hardlink,
         .keep_metadata_version = prefix == "covered-by-broken",
         .make_source_readonly = true,
         .external_transaction = disk_transaction
     };
-    return getDataPartStorage().freeze(
-        storage.relative_data_path,
-        *maybe_path_in_detached,
-        Context::getGlobalContextInstance()->getReadSettings(),
-        Context::getGlobalContextInstance()->getWriteSettings(),
-        /* save_metadata_callback= */ {},
-        params);
+
+    try {
+        return getDataPartStorage().freeze(
+            storage.relative_data_path,
+            *maybe_path_in_detached,
+            Context::getGlobalContextInstance()->getReadSettings(),
+            Context::getGlobalContextInstance()->getWriteSettings(),
+            /* save_metadata_callback= */ {},
+            params);
+    } catch (const S3Exception & e) {
+        if (!copy_instead_of_hardlink && !S3::isNotFoundError(e.getS3ErrorCode()))
+            throw;
+
+        tryLogCurrentException(__PRETTY_FUNCTION__, fmt::format("while cloning part to {}", *maybe_path_in_detached));
+
+        params.copy_instead_of_hardlink = false;
+        return getDataPartStorage().freeze(
+            storage.relative_data_path,
+            *maybe_path_in_detached,
+            Context::getGlobalContextInstance()->getReadSettings(),
+            Context::getGlobalContextInstance()->getWriteSettings(),
+            /* save_metadata_callback= */ {},
+            params);
+    }
+
 }
 
 MutableDataPartStoragePtr IMergeTreeDataPart::makeCloneOnDisk(
