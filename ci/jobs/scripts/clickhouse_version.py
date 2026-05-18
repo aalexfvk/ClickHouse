@@ -49,33 +49,6 @@ SET(VERSION_STRING {string})
     @classmethod
     def get_current_version_as_dict(cls):
         version = cls.get_release_version_as_dict()
-        info = Info()
-        try:
-            tweak = int(
-                Shell.get_output(
-                    f"git rev-list --count --first-parent {version['githash']}..HEAD",
-                    verbose=True,
-                )
-            )
-        except (ValueError, Exception):
-            # Shallow checkout or other error
-            tweak = 1
-        version_type = "testing"
-        if info.pr_number == 0 and bool(
-            re.match(r"^\d{2}\.\d+$", info.git_branch.removeprefix("release/"))
-        ):
-            if version["minor"] % 5 == 3:
-                version_type = "lts"
-            else:
-                version_type = "stable"
-        version_string = (
-            f'{version["major"]}.{version["minor"]}.{version["patch"]}.{tweak}'
-        )
-        version_description = f"v{version_string}-{version_type}"
-        version["githash"] = info.sha
-        version["tweak"] = tweak
-        version["describe"] = version_description
-        version["string"] = version_string
         return version
 
     @classmethod

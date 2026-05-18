@@ -350,6 +350,7 @@ class Runner:
                 if p_ and Path(p_).exists() and p_.startswith("/"):
                     extra_mounts += f" --volume {p_}:{p_}"
             cmd = f"docker run {tty} --rm --name praktika {'--user $(id -u):$(id -g)' if not from_root else ''} -e PYTHONUNBUFFERED=1 -e PYTHONPATH='.:./ci' --volume ./:{current_dir} {extra_mounts} {gh_mount} {workdir} {' '.join(settings)} {docker} {job.command}"
+            cmd = re.sub(r'(--volume)(\s+|=)\.(?:/)?(:)', r'\1\2' + current_dir + r'\3', cmd)
         else:
             cmd = job.command
             python_path = os.getenv("PYTHONPATH", ":")
