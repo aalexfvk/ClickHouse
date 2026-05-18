@@ -69,7 +69,6 @@ common_build_job_config = Job.Config(
     requires=[],
     command='python3 ./ci/jobs/build_clickhouse.py --build-type "{PARAMETER}"',
     run_in_docker=BINARY_DOCKER_COMMAND,
-    timeout=3600 * 4,
     digest_config=build_digest_config,
 )
 
