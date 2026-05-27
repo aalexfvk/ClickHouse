@@ -2500,7 +2500,9 @@ DataPartStoragePtr IMergeTreeDataPart::makeCloneInDetached(const String & prefix
             Context::getGlobalContextInstance()->getWriteSettings(),
             /* save_metadata_callback= */ {},
             params);
-    } catch (const S3Exception & e) {
+    }
+    catch (const S3Exception & e)
+    {
         if (!copy_instead_of_hardlink && !S3::isNotFoundError(e.getS3ErrorCode()))
             throw;
 
