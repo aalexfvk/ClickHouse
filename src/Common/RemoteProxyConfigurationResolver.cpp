@@ -21,6 +21,10 @@ std::string RemoteProxyHostFetcherImpl::fetch(const Poco::URI & endpoint, const 
     auto request = Poco::Net::HTTPRequest(Poco::Net::HTTPRequest::HTTP_GET, endpoint.getPath(), Poco::Net::HTTPRequest::HTTP_1_1);
     auto session = makeHTTPSession(HTTPConnectionGroupType::HTTP, endpoint, timeouts);
 
+    /// Force `Connection: close`: a kept-alive TCP session would pin the balancer
+    /// to a single proxy host, breaking round-robin rotation.
+    session->setKeepAlive(false);
+
     session->sendRequest(request);
 
     Poco::Net::HTTPResponse response;
