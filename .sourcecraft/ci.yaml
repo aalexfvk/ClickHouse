@@ -104,11 +104,21 @@ cubes:
 
   # Parameterized cube for downloading a pre-built binary from S3.
   # Override BUILD_TYPE (e.g. amd_debug, amd_binary, amd_release) when using.
+  # The binary is placed at ci/tmp/clickhouse — the location expected by
+  # functional_tests.py, install_check.py, fuzzer/run-fuzzer.sh, etc.
+  # (see `temp_dir = f"{Utils.cwd()}/ci/tmp"` in ci/jobs/functional_tests.py).
   - name: download-binary
     env:
       BUILD_TYPE: ${{ env.BUILD_TYPE }}
     script:
-      - s3cmd --config /etc/s3cmd/bucket.conf get s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/$BUILD_TYPE/clickhouse
+      - |
+        set -ex
+        mkdir -p ci/tmp
+        s3cmd --config /etc/s3cmd/bucket.conf get --force \
+          s3://clickhouse-builds/$SOURCECRAFT_RUN_ID/$BUILD_TYPE/clickhouse \
+          ci/tmp/clickhouse
+        chmod +x ci/tmp/clickhouse
+        ls -lah ci/tmp/clickhouse
 
   - name: setup-sccache
     script:
@@ -141,6 +151,11 @@ cubes:
           "SCCACHE_ENDPOINT=$S3_HOST_BASE" \
           "SCCACHE_REGION=ru-central1" \
           "SCCACHE_S3_USE_SSL=true" \
+          "SCCACHE_BUCKET=clickhouse-builds" \
+          "SCCACHE_S3_KEY_PREFIX=ccache/sccache" \
+          "SCCACHE_IDLE_TIMEOUT=7200" \
+          "SCCACHE_ERROR_LOG=/tmp/build/workspace/ci/tmp/build/sccache.log" \
+          "SCCACHE_LOG=info" \
           "SCCACHE_BASEDIR=$PWD" \
           "AWS_DEFAULT_REGION=ru-central1" \
           > ci/local.env
@@ -717,9 +732,12 @@ workflows:
           GIT_SSL_NO_VERIFY: 1
         cubes:
           - name: configure-git
-            uses: configure-git          
+          - name: print-system-info
+            uses: print-system-info
+          - name: configure-git
+            uses: configure-git
           - name: checkout
-            uses: checkout-with-cache          
+            uses: checkout-with-cache
           - name: setup-sccache
             uses: setup-sccache
           - name: fast_test

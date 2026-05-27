@@ -44,6 +44,28 @@ def _GH_Auth(workflow):
 
 
 class Runner:
+    LOCAL_ENV_FILE = "ci/local.env"
+
+    @classmethod
+    def _load_local_env(cls):
+        """Load environment variables from a gitignored local env file (KEY=VALUE format).
+
+        Backported from yc/master: allows .sourcecraft/ CI cubes (e.g. setup-sccache)
+        to write secrets/configuration to ``ci/local.env`` which is then propagated
+        to Docker via ``--env-file`` and also into the current process environment.
+        """
+        try:
+            with open(cls.LOCAL_ENV_FILE) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        key, _, value = line.partition("=")
+                        os.environ[key.strip()] = value.strip()
+        except FileNotFoundError:
+            pass
+
     @staticmethod
     def generate_local_run_environment(workflow, job, pr=None, sha=None, branch=None):
         print("WARNING: Generate dummy env for local test")
@@ -374,7 +396,12 @@ class Runner:
             for p_ in [path, path_1]:
                 if p_ and Path(p_).exists() and p_.startswith("/"):
                     extra_mounts += f" --volume {p_}:{p_}"
-            cmd = f"docker run {tty} --rm --name {container_name} {'--user $(id -u):$(id -g)' if not from_root else ''} -e PYTHONUNBUFFERED=1 -e PYTHONPATH='.:./ci' --volume ./:{current_dir} {extra_mounts} {gh_mount} {workdir} {' '.join(settings)} {docker} {job.command}"
+            local_env_flag = (
+                f"--env-file {self.LOCAL_ENV_FILE}"
+                if Path(self.LOCAL_ENV_FILE).exists()
+                else ""
+            )
+            cmd = f"docker run {tty} --rm --name {container_name} {'--user $(id -u):$(id -g)' if not from_root else ''} -e PYTHONUNBUFFERED=1 -e PYTHONPATH='.:./ci' {local_env_flag} --volume ./:{current_dir} {extra_mounts} {gh_mount} {workdir} {' '.join(settings)} {docker} {job.command}"
             cmd = re.sub(r'(--volume)(\s+|=)\.(?:/)?(:)', r'\1\2' + current_dir + r'\3', cmd)
         else:
             cmd = job.command
@@ -857,6 +884,8 @@ class Runner:
         path_1="",
         workers=None,
     ):
+        self._load_local_env()
+
         res = True
         setup_env_code = -10
         prerun_code = -10
