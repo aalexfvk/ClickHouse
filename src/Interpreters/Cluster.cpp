@@ -27,6 +27,8 @@ namespace Setting
     extern const SettingsSeconds distributed_replica_error_half_life;
     extern const SettingsLoadBalancing load_balancing;
     extern const SettingsBool prefer_localhost_replica;
+    extern const SettingsUInt64 distributed_replica_circuit_breaker_ban_min_ms;
+    extern const SettingsUInt64 distributed_replica_circuit_breaker_ban_max_ms;
 }
 
 namespace ErrorCodes
@@ -499,7 +501,11 @@ Cluster::Cluster(const Poco::Util::AbstractConfiguration & config,
                 address.bind_host,
                 address.priority);
 
-            info.pool = std::make_shared<ConnectionPoolWithFailover>(ConnectionPoolPtrs{pool}, settings[Setting::load_balancing]);
+            info.pool = std::make_shared<ConnectionPoolWithFailover>(
+                ConnectionPoolPtrs{pool},
+                settings[Setting::load_balancing],
+                settings[Setting::distributed_replica_circuit_breaker_ban_min_ms],
+                settings[Setting::distributed_replica_circuit_breaker_ban_max_ms]);
             info.per_replica_pools = {std::move(pool)};
             info.default_database = address.default_database;
 
@@ -675,6 +681,8 @@ void Cluster::addShard(
     ConnectionPoolWithFailoverPtr shard_pool = std::make_shared<ConnectionPoolWithFailover>(
         all_replicas_pools,
         settings[Setting::load_balancing],
+        settings[Setting::distributed_replica_circuit_breaker_ban_min_ms],
+        settings[Setting::distributed_replica_circuit_breaker_ban_max_ms],
         settings[Setting::distributed_replica_error_half_life].totalSeconds(),
         settings[Setting::distributed_replica_error_cap]);
 
@@ -827,7 +835,11 @@ Cluster::Cluster(Cluster::ReplicasAsShardsTag, const Cluster & from, const Setti
                     address.bind_host,
                     address.priority);
 
-                info.pool = std::make_shared<ConnectionPoolWithFailover>(ConnectionPoolPtrs{pool}, settings[Setting::load_balancing]);
+                info.pool = std::make_shared<ConnectionPoolWithFailover>(
+                    ConnectionPoolPtrs{pool},
+                    settings[Setting::load_balancing],
+                    settings[Setting::distributed_replica_circuit_breaker_ban_min_ms],
+                    settings[Setting::distributed_replica_circuit_breaker_ban_max_ms]);
                 info.per_replica_pools = {std::move(pool)};
                 info.default_database = address.default_database;
 

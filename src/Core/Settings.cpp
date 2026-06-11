@@ -4154,6 +4154,32 @@ See also:
 - [distributed_replica_error_cap](#distributed_replica_error_cap)
 - [distributed_replica_error_half_life](#distributed_replica_error_half_life)
 )", 0) \
+    DECLARE(UInt64, distributed_replica_circuit_breaker_ban_min_ms, 0, R"(
+- Type: unsigned int
+- Default value: 0
+
+Minimum ban duration in milliseconds for a replica that has failed `connections_with_failover_max_tries` times in a row.
+The actual ban duration grows exponentially with each consecutive full failure: `ban_min_ms * 2^consecutive_failures`,
+capped at `distributed_replica_circuit_breaker_ban_max_ms`. The ban counter resets to zero after a successful connection.
+Set to 0 to disable the circuit breaker.
+
+See also:
+
+- [distributed_replica_circuit_breaker_ban_max_ms](#distributed_replica_circuit_breaker_ban_max_ms)
+- [connections_with_failover_max_tries](#connections_with_failover_max_tries)
+)", 0) \
+    DECLARE(UInt64, distributed_replica_circuit_breaker_ban_max_ms, 60000, R"(
+- Type: unsigned int
+- Default value: 60000
+
+Maximum ban duration in milliseconds for a replica in the circuit breaker.
+See `distributed_replica_circuit_breaker_ban_min_ms` for details.
+
+See also:
+
+- [distributed_replica_circuit_breaker_ban_min_ms](#distributed_replica_circuit_breaker_ban_min_ms)
+- [connections_with_failover_max_tries](#connections_with_failover_max_tries)
+)", 0) \
     \
     DECLARE(UInt64, min_free_disk_space_for_temporary_data, 0, R"(
 The minimum disk space to keep while writing temporary data used in external sorting and aggregation.

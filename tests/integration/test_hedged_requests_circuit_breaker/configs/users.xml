@@ -1,0 +1,10 @@
+<clickhouse>
+    <profiles>
+        <default>
+            <!-- Circuit breaker: ban a replica for ban_min_ms * 2^consecutive_failures. -->
+            <distributed_replica_circuit_breaker_ban_min_ms>2000</distributed_replica_circuit_breaker_ban_min_ms>
+            <distributed_replica_circuit_breaker_ban_max_ms>60000</distributed_replica_circuit_breaker_ban_max_ms>
+            <distributed_replica_max_ignored_errors>1000</distributed_replica_max_ignored_errors>
+        </default>
+    </profiles>
+</clickhouse>

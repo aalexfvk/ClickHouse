@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <ctime>
 #include <cstdlib>
 #include <climits>
@@ -30,7 +31,17 @@ namespace ProfileEvents
 {
     extern const Event DistributedConnectionFailAtAll;
     extern const Event DistributedConnectionSkipReadOnlyReplica;
+    extern const Event DistributedConnectionCircuitBreakerBan;
 }
+
+/// Result of a connection attempt for a single pool within one request.
+/// Used to update the shared circuit breaker state after the request completes.
+enum class PoolAttemptResult : uint8_t
+{
+    NOT_ATTEMPTED, /// The pool was not tried at all (banned or not needed).
+    SUCCESS,       /// Connection was established successfully.
+    FAILURE,       /// All max_tries attempts failed.
+};
 
 /// This class provides a pool with fault tolerance. It is used for pooling of connections to replicated DB.
 /// Initialized by several PoolBase objects.
@@ -58,10 +69,14 @@ public:
             NestedPools nested_pools_,
             time_t decrease_error_period_,
             size_t max_error_cap_,
-            LoggerPtr log_)
+            LoggerPtr log_,
+            size_t circuit_breaker_ban_min_ms_ = 0,
+            size_t circuit_breaker_ban_max_ms_ = 0)
         : nested_pools(std::move(nested_pools_))
         , decrease_error_period(decrease_error_period_)
         , max_error_cap(max_error_cap_)
+        , circuit_breaker_ban_min_ms(circuit_breaker_ban_min_ms_)
+        , circuit_breaker_ban_max_ms(circuit_breaker_ban_max_ms_)
         , shared_pool_states(nested_pools.size())
         , log(log_)
     {
@@ -95,6 +110,9 @@ public:
         size_t index = 0;
         size_t error_count = 0;
         size_t slowdown_count = 0;
+        /// Circuit breaker fields
+        std::chrono::steady_clock::time_point banned_until = {};
+        PoolAttemptResult attempt_result = PoolAttemptResult::NOT_ATTEMPTED;
     };
 
     /// This functor must be provided by a client. It must perform a single try that takes a connection
@@ -155,6 +173,7 @@ protected:
 
     inline void incrementErrorCount(NestedPoolPtr pool);
 
+    inline void updateCircuitBreakerState(PoolState & pool_state, const ShuffledPool & pool);
 
     auto getPoolExtendedStates() const
     {
@@ -166,6 +185,10 @@ protected:
 
     const time_t decrease_error_period;
     const size_t max_error_cap;
+    /// Circuit breaker: minimum ban duration (0 = disabled).
+    const size_t circuit_breaker_ban_min_ms;
+    /// Circuit breaker: maximum ban duration.
+    const size_t circuit_breaker_ban_max_ms;
 
     mutable std::mutex pool_states_mutex;
     PoolStates shared_pool_states;
@@ -194,7 +217,12 @@ PoolWithFailoverBase<TNestedPool>::getShuffledPools(
     std::vector<ShuffledPool> shuffled_pools;
     shuffled_pools.reserve(nested_pools.size());
     for (size_t i = 0; i < nested_pools.size(); ++i)
-        shuffled_pools.emplace_back(ShuffledPool{.pool = nested_pools[i], .state = &pool_states[i], .index = i});
+        shuffled_pools.emplace_back(ShuffledPool{
+            .pool = nested_pools[i],
+            .state = &pool_states[i],
+            .index = i,
+            .banned_until = pool_states[i].banned_until,
+        });
 
     ::sort(
         shuffled_pools.begin(), shuffled_pools.end(),
@@ -207,6 +235,34 @@ PoolWithFailoverBase<TNestedPool>::getShuffledPools(
 }
 
 template <typename TNestedPool>
+inline void PoolWithFailoverBase<TNestedPool>::updateCircuitBreakerState(PoolState & pool_state, const ShuffledPool & pool)
+{
+    switch (pool.attempt_result)
+    {
+        case PoolAttemptResult::NOT_ATTEMPTED:
+            break;
+
+        case PoolAttemptResult::SUCCESS:
+            pool_state.consecutive_failures = 0;
+            pool_state.banned_until = {};
+            break;
+
+        case PoolAttemptResult::FAILURE:
+            if (circuit_breaker_ban_min_ms > 0)
+            {
+                const UInt64 shift = std::min<UInt64>(pool_state.consecutive_failures, 31);
+                const UInt64 ban_ms = std::min(
+                    static_cast<UInt64>(circuit_breaker_ban_max_ms),
+                    static_cast<UInt64>(circuit_breaker_ban_min_ms) << shift);
+                pool_state.banned_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(ban_ms);
+                ProfileEvents::increment(ProfileEvents::DistributedConnectionCircuitBreakerBan);
+            }
+            ++pool_state.consecutive_failures;
+            break;
+    }
+}
+
+template <typename TNestedPool>
 inline void PoolWithFailoverBase<TNestedPool>::updateSharedErrorCounts(std::vector<ShuffledPool> & shuffled_pools)
 {
     std::lock_guard lock(pool_states_mutex);
@@ -215,6 +271,7 @@ inline void PoolWithFailoverBase<TNestedPool>::updateSharedErrorCounts(std::vect
         auto & pool_state = shared_pool_states[pool.index];
         pool_state.error_count = std::min<UInt64>(max_error_cap, pool_state.error_count + pool.error_count);
         pool_state.slowdown_count += pool.slowdown_count;
+        updateCircuitBreakerState(pool_state, pool);
     }
 }
 
@@ -282,6 +339,10 @@ PoolWithFailoverBase<TNestedPool>::getMany(
     size_t up_to_date_count = 0;
     size_t failed_pools_count = 0;
 
+    /// Circuit breaker: track which pools are banned to avoid counting them multiple times.
+    std::vector<bool> is_banned(shuffled_pools.size(), false);
+    size_t banned_pools_count = 0;
+
     /// At exit update shared error counts with error counts occurred during this call.
     SCOPE_EXIT(
     {
@@ -295,7 +356,7 @@ PoolWithFailoverBase<TNestedPool>::getMany(
         for (size_t i = 0; i < shuffled_pools.size(); ++i)
         {
             if (up_to_date_count >= max_entries /// Already enough good entries.
-                || entries_count + failed_pools_count >= nested_pools.size()) /// No more good entries will be produced.
+                || entries_count + failed_pools_count + banned_pools_count >= nested_pools.size()) /// No more good entries will be produced.
             {
                 finished = true;
                 break;
@@ -306,6 +367,18 @@ PoolWithFailoverBase<TNestedPool>::getMany(
             if (max_tries && (shuffled_pool.error_count >= max_tries || !result.entry.isNull()))
                 continue;
 
+            /// Circuit breaker: skip pools that are temporarily banned due to consecutive failures.
+            /// Count each banned pool only once so the termination condition remains correct.
+            if (shuffled_pool.banned_until > std::chrono::steady_clock::now())
+            {
+                if (!is_banned[i])
+                {
+                    is_banned[i] = true;
+                    ++banned_pools_count;
+                }
+                continue;
+            }
+
             std::string fail_message;
             result = try_get_entry(shuffled_pool.pool, fail_message);
 
@@ -314,6 +387,7 @@ PoolWithFailoverBase<TNestedPool>::getMany(
 
             if (!result.entry.isNull())
             {
+                shuffled_pool.attempt_result = PoolAttemptResult::SUCCESS;
                 ++entries_count;
                 if (result.is_usable)
                 {
@@ -335,6 +409,7 @@ PoolWithFailoverBase<TNestedPool>::getMany(
 
                 if (shuffled_pool.error_count >= max_tries)
                 {
+                    shuffled_pool.attempt_result = PoolAttemptResult::FAILURE;
                     ++failed_pools_count;
                     ProfileEvents::increment(ProfileEvents::DistributedConnectionFailAtAll);
                 }
@@ -386,6 +461,11 @@ struct PoolWithFailoverBase<TNestedPool>::PoolState
     UInt64 error_count = 0;
     /// The number of slowdowns that led to changing replica in HedgedRequestsFactory
     UInt64 slowdown_count = 0;
+    /// The number of consecutive failures (all max_tries attempts failed).
+    /// Unlike error_count, this counter does NOT decay over time — it resets only on success.
+    UInt64 consecutive_failures = 0;
+    /// Circuit breaker: time point until which this replica is banned (default = not banned).
+    std::chrono::steady_clock::time_point banned_until = {};
     /// Priority from the <remote_server> configuration.
     Priority config_priority{1};
     /// Priority from the GetPriorityFunc.
