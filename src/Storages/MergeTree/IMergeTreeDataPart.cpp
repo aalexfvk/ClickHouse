@@ -2466,7 +2466,8 @@ DataPartStoragePtr IMergeTreeDataPart::makeCloneInDetached(const String & prefix
         .external_transaction = disk_transaction
     };
 
-    try {
+    try
+    {
         return getDataPartStorage().freeze(
             storage.relative_data_path,
             *maybe_path_in_detached,
@@ -2474,7 +2475,9 @@ DataPartStoragePtr IMergeTreeDataPart::makeCloneInDetached(const String & prefix
             Context::getGlobalContextInstance()->getWriteSettings(),
             /* save_metadata_callback= */ {},
             params);
-    } catch (const S3Exception & e) {
+    }
+    catch (const S3Exception & e)
+    {
         if (!copy_instead_of_hardlink && !S3::isNotFoundError(e.getS3ErrorCode()))
             throw;
 
@@ -2489,7 +2492,6 @@ DataPartStoragePtr IMergeTreeDataPart::makeCloneInDetached(const String & prefix
             /* save_metadata_callback= */ {},
             params);
     }
-
 }
 
 MutableDataPartStoragePtr IMergeTreeDataPart::makeCloneOnDisk(
