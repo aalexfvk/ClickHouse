@@ -38,6 +38,8 @@ public:
     ConnectionPoolWithFailover(
             ConnectionPoolPtrs nested_pools_,
             LoadBalancing load_balancing,
+            size_t circuit_breaker_ban_min_ms_ = 0,
+            size_t circuit_breaker_ban_max_ms_ = 0,
             time_t decrease_error_period_ = DBMS_CONNECTION_POOL_WITH_FAILOVER_DEFAULT_DECREASE_ERROR_PERIOD,
             size_t max_error_cap = DBMS_CONNECTION_POOL_WITH_FAILOVER_MAX_ERROR_COUNT);
 

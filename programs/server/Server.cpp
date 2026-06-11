@@ -2743,6 +2743,13 @@ try
     /// Load global settings from default_profile and system_profile.
     global_context->setDefaultProfiles(config());
 
+    /// Reload clusters config after loading default profile settings, because cluster connection pools
+    /// are initialized from settings at the time of cluster creation.
+    /// The first cluster initialization happens inside ConfigReloader constructor (before setDefaultProfiles),
+    /// so settings from the default profile were not yet applied. Reloading here ensures that settings
+    /// like `distributed_replica_circuit_breaker_ban_min_ms` from the default profile take effect.
+    global_context->reloadClusterConfig();
+
     /// Initialize background executors after we load default_profile config.
     /// This is needed to load proper values of background_pool_size etc.
     global_context->initializeBackgroundExecutorsIfNeeded();

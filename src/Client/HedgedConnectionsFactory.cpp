@@ -5,6 +5,8 @@
 #include <Common/ProfileEvents.h>
 #include <Core/ProtocolDefines.h>
 
+#include <chrono>
+
 namespace ProfileEvents
 {
     extern const Event HedgedRequestsChangeReplica;
@@ -166,6 +168,11 @@ HedgedConnectionsFactory::State HedgedConnectionsFactory::waitForReadyConnection
     return setBestUsableReplica(connection_out);
 }
 
+bool HedgedConnectionsFactory::isBanned(int index) const
+{
+    return shuffled_pools[index].banned_until > std::chrono::steady_clock::now();
+}
+
 int HedgedConnectionsFactory::getNextIndex()
 {
     /// Check if there is no free replica.
@@ -175,8 +182,16 @@ int HedgedConnectionsFactory::getNextIndex()
     /// Check if it's the first time.
     if (last_used_index == -1)
     {
-        last_used_index = 0;
-        return 0;
+        if (!isBanned(0))
+        {
+            last_used_index = 0;
+            return 0;
+        }
+        else
+        {
+            /// If first replica is banned — fall through to the search loop below.
+            last_used_index = static_cast<int>(shuffled_pools.size()) - 1;
+        }
     }
 
     bool finish = false;
@@ -187,7 +202,8 @@ int HedgedConnectionsFactory::getNextIndex()
 
         /// Check if we can try this replica.
         if (replicas[next_index].connection_establisher->getResult().entry.isNull()
-            && (max_tries == 0 || shuffled_pools[next_index].error_count < max_tries))
+            && (max_tries == 0 || shuffled_pools[next_index].error_count < max_tries)
+            && !isBanned(next_index))
             finish = true;
 
         /// If we made a complete round, there is no replica to connect.
@@ -306,6 +322,7 @@ HedgedConnectionsFactory::State HedgedConnectionsFactory::processFinishedConnect
     if (!result.entry.isNull())
     {
         ++entries_count;
+        shuffled_pools[index].attempt_result = PoolAttemptResult::SUCCESS;
 
         if (result.is_usable)
         {
@@ -335,6 +352,7 @@ HedgedConnectionsFactory::State HedgedConnectionsFactory::processFinishedConnect
         {
             ++failed_pools_count;
             ProfileEvents::increment(ProfileEvents::DistributedConnectionFailAtAll);
+            shuffled_pool.attempt_result = PoolAttemptResult::FAILURE;
         }
     }
 

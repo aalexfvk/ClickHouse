@@ -117,6 +117,9 @@ private:
 
     bool isTwoLevelAggregationIncompatible(Connection * connection);
 
+    /// Returns true if the replica at the given index is currently banned by the circuit breaker.
+    bool isBanned(int index) const;
+
     const ConnectionPoolWithFailoverPtr pool;
     const ConnectionTimeouts timeouts;
 
