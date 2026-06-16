@@ -314,7 +314,7 @@ public:
     StorageMetadataPtr getStorageMetadata() const { return storage_snapshot->metadata; }
 
     /// Returns `false` if requested reading cannot be performed.
-    bool requestReadingInOrder(size_t prefix_size, int direction, size_t limit);
+    bool requestReadingInOrder(size_t prefix_size, int direction, size_t limit, size_t query_limit = 0);
     bool setVirtualRowConversions(ActionsDAG virtual_row_conversion_);
     bool readsInOrder() const;
     const InputOrderInfoPtr & getInputOrder() const { return query_info.input_order_info; }
@@ -430,6 +430,8 @@ private:
     UInt64 selected_rows = 0;
     UInt64 selected_marks = 0;
 
+    UInt64 query_task_size_limit = 0;
+
     std::optional<VectorSearchParameters> vector_search_parameters;
 
     using PoolSettings = MergeTreeReadPoolBase::PoolSettings;
@@ -462,6 +464,17 @@ private:
         PoolSettings pool_settings,
         ReadType read_type,
         UInt64 limit);
+
+    Pipe readInOrderByPartitions(
+        RangesInDataParts parts_with_ranges,
+        const MergeTreeIndexBuildContextPtr & index_build_context,
+        const Names & column_names,
+        PoolSettings pool_settings,
+        ReadType read_type,
+        UInt64 read_limit,
+        const SortDescription & sort_description,
+        ExpressionActionsPtr sorting_key_expr,
+        int partition_sort_direction);
 
     Pipe spreadMarkRanges(
         RangesInDataParts && parts_with_ranges,

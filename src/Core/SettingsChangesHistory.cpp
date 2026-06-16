@@ -103,6 +103,7 @@ const VersionToSettingsChangesMap & getSettingsChangesHistory()
             {"allow_rank_dense_rank_arguments", true, false, "New setting. Before 26.5, the `RANK` and `DENSE_RANK` window functions silently ignored any provided arguments (equivalent to `allow_rank_dense_rank_arguments = 1`). From 26.5, they reject arguments by default with `NUMBER_OF_ARGUMENTS_DOESNT_MATCH` because per SQL standard these functions take zero arguments. Set this to `1` to restore the legacy behavior."},
             {"distributed_replica_circuit_breaker_ban_min_ms", 0, 0, "New setting."},
             {"distributed_replica_circuit_breaker_ban_max_ms", 60000, 60000, "New setting."},
+            {"read_in_order_allow_per_partition_lazy_read", false, false, "Added new setting to read partitions one by one if partitions are ordered in the given sorting key and in-order reading is enabled."},
         });
         addSettingsChanges(settings_changes_history, "26.4",
         {
