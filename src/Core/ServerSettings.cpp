@@ -725,6 +725,15 @@ namespace
     <max_part_num_to_warn>400</max_part_num_to_warn>
     ```
     )", 0) \
+    DECLARE(UInt64, max_access_entity_num_to_warn, 10000lu, R"(
+    If number of access entities exceeds the specified value, clickhouse server will add warning messages to `system.warnings` table.
+
+    **Example**
+
+    ```xml
+    <max_access_entity_num_to_warn>400</max_access_entity_num_to_warn>
+    ```
+    )", 0) \
     DECLARE(UInt64, max_named_collection_num_to_throw, 0lu, R"(
     If number of named collections is greater than this value, server will throw an exception.
 
@@ -813,6 +822,18 @@ namespace
     **Example**
     ```xml
     <max_view_num_to_throw>400</max_view_num_to_throw>
+    ```
+    )", 0) \
+    DECLARE(UInt64, max_access_entity_num_to_throw, 0lu, R"(
+    If number of access entities is greater than this value, the server will throw an exception.
+
+    :::note
+    A value of `0` means no limitation.
+    :::
+
+    **Example**
+    ```xml
+    <max_access_entity_num_to_throw>400</max_access_entity_num_to_throw>
     ```
     )", 0) \
     DECLARE(UInt64, max_database_num_to_throw, 0lu, R"(If number of databases is greater than this value, server will throw an exception. 0 means no limitation.)", 0) \
@@ -1714,6 +1735,7 @@ void ServerSettings::dumpToSystemServerSettingsColumns(ServerSettingColumnsParam
             {"max_server_memory_usage", {std::to_string(total_memory_tracker.getHardLimit()), ChangeableWithoutRestart::Yes}},
 
             {"max_table_size_to_drop", {std::to_string(context->getMaxTableSizeToDrop()), ChangeableWithoutRestart::Yes}},
+            {"max_access_entity_num_to_warn", {std::to_string(context->getMaxAccessEntitiesNumToWarn()), ChangeableWithoutRestart::Yes}},
             {"max_named_collection_num_to_warn", {std::to_string(context->getMaxNamedCollectionNumToWarn()), ChangeableWithoutRestart::Yes}},
             {"max_table_num_to_warn", {std::to_string(context->getMaxTableNumToWarn()), ChangeableWithoutRestart::Yes}},
             {"max_view_num_to_warn", {std::to_string(context->getMaxViewNumToWarn()), ChangeableWithoutRestart::Yes}},
