@@ -64,6 +64,7 @@ namespace ServerSetting
     extern const ServerSettingsUInt64 database_catalog_unused_dir_cleanup_period_sec;
     extern const ServerSettingsUInt64 database_catalog_unused_dir_hide_timeout_sec;
     extern const ServerSettingsUInt64 database_catalog_unused_dir_rm_timeout_sec;
+    extern const ServerSettingsString databases_to_ignore_entity_limits;
 }
 
 namespace ErrorCodes
@@ -353,6 +354,19 @@ bool DatabaseCatalog::isPredefinedDatabase(std::string_view database_name)
 {
     return database_name == TEMPORARY_DATABASE || database_name == SYSTEM_DATABASE || database_name == INFORMATION_SCHEMA
         || database_name == INFORMATION_SCHEMA_UPPERCASE;
+}
+
+bool DatabaseCatalog::ignoreLimitsForDatabase(const String & database_name)
+{
+    if (databases_to_ignore_entity_limits.empty())
+    {
+        String databases_list = getContext()->getServerSettings()[ServerSetting::databases_to_ignore_entity_limits].toString();
+        if (databases_list.empty())
+            return false;
+        boost::split(databases_to_ignore_entity_limits, databases_list, [](char c) { return c == ','; });
+    }
+
+    return databases_to_ignore_entity_limits.contains(database_name);
 }
 
 

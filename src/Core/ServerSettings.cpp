@@ -1521,6 +1521,16 @@ The policy on how to perform a scheduling of CPU slots specified by `concurrent_
     ```xml
     <skip_check_for_incorrect_settings>1</skip_check_for_incorrect_settings>
     ```
+    )", 0) \
+    DECLARE(String, databases_to_ignore_entity_limits, "", R"(
+    Tables and other entities from these databases will not be counted in metrics such as `AttachedTable`.
+    Adding a table to these databases also ignores all limits like [`max_table_num_to_throw`](#max_table_num_to_throw).
+
+    **Example**
+
+    ```xml
+    <databases_to_ignore_entity_limits>_system_database,another_database</databases_to_ignore_entity_limits>
+    ```
     )", 0)
 
 /// Settings with a path are server settings with at least one layer of nesting that have a fixed structure (no lists, lists, enumerations, repetitions, ...).

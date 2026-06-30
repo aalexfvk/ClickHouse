@@ -110,6 +110,8 @@ public:
     /// Returns true if a passed name is one of the predefined databases' names.
     static bool isPredefinedDatabase(std::string_view database_name);
 
+    bool ignoreLimitsForDatabase(const String & database_name);
+
     static fs::path getMetadataDirPath() { return fs::path("metadata"); }
     static fs::path getMetadataDirPath(const String & database_name) { return getMetadataDirPath() / escapeForFileName(database_name); }
     static fs::path getMetadataFilePath(const String & database_name) { return getMetadataDirPath() / (escapeForFileName(database_name) + ".sql"); }
@@ -372,6 +374,8 @@ private:
     static constexpr time_t DBMS_DEFAULT_DISK_RELOAD_PERIOD_SEC = 5;
 
     std::atomic<bool> replicated_ddl_queries_enabled = false;
+
+    std::unordered_set<String> databases_to_ignore_entity_limits;
 };
 
 
