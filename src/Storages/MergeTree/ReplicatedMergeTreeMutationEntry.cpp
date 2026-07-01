@@ -29,6 +29,8 @@ void ReplicatedMergeTreeMutationEntry::writeText(WriteBuffer & out) const
 
     out << "alter version: ";
     out << alter_version;
+    out << "\n";
+    out << "author: " << escape << author;
 
 }
 
@@ -58,6 +60,24 @@ void ReplicatedMergeTreeMutationEntry::readText(ReadBuffer & in)
     commands.readText(in, false);
     if (checkString("\nalter version: ", in))
         in >> alter_version;
+
+    /// Skip optional fields added by newer versions after alter version.
+    while (!in.eof())
+    {
+        in >> "\n";
+        if (in.eof())
+            break;
+
+        if (checkString("author: ", in))
+        {
+            readEscapedStringUntilEOL(author, in);
+            continue;
+        }
+
+        String ignored;
+        readEscapedStringUntilEOL(ignored, in);
+        LOG_DEBUG(getLogger("ReplicatedMergeTreeMutationEntry"), "Skipping unknown field '{}' in mutation entry {}", ignored, znode_name);
+    }
 }
 
 String ReplicatedMergeTreeMutationEntry::toString() const

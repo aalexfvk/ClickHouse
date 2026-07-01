@@ -47,13 +47,14 @@ UInt64 MergeTreeMutationEntry::parseFileName(const String & file_name_)
                     file_name_);
 }
 
-MergeTreeMutationEntry::MergeTreeMutationEntry(MutationCommands commands_, DiskPtr disk_, const String & path_prefix_, UInt64 tmp_number,
-                                               const TransactionID & tid_, const WriteSettings & settings)
+MergeTreeMutationEntry::MergeTreeMutationEntry(MutationCommands commands_, DiskPtr disk_, const String & path_prefix_, const String & author_,
+                                               UInt64 tmp_number, const TransactionID & tid_, const WriteSettings & settings)
     : create_time(time(nullptr))
     , commands(std::make_shared<MutationCommands>(std::move(commands_)))
     , disk(std::move(disk_))
     , path_prefix(path_prefix_)
     , file_name("tmp_mutation_" + toString(tmp_number) + ".txt")
+    , author(author_)
     , is_temp(true)
     , tid(tid_)
 {
@@ -75,6 +76,9 @@ MergeTreeMutationEntry::MergeTreeMutationEntry(MutationCommands commands_, DiskP
             TransactionID::write(tid, *out);
             *out << "\n";
         }
+
+        *out << "author: " << escape << author << "\n";
+
         out->finalize();
         out->sync();
     }
@@ -137,17 +141,38 @@ MergeTreeMutationEntry::MergeTreeMutationEntry(DiskPtr disk_, const String & pat
     commands->readText(*buf, false);
     *buf >> "\n";
 
-    if (buf->eof())
+    if (checkString("tid: ", *buf))
+    {
+        tid = TransactionID::read(*buf);
+        *buf >> "\n";
+    }
+    else
     {
         tid = Tx::PrehistoricTID;
         csn = Tx::PrehistoricCSN;
     }
-    else
-    {
-        *buf >> "tid: ";
-        tid = TransactionID::read(*buf);
-        *buf >> "\n";
 
+    /// Read optional fields that may appear after tid (or after commands for non-transactional).
+    /// New fields must be added here, between tid and csn.
+    /// Unknown fields are skipped for forward compatibility.
+    while (!buf->eof())
+    {
+        if (checkString("csn: ", *buf))
+        {
+            *buf >> csn >> "\n";
+            break;
+        }
+
+        if (checkString("author: ", *buf))
+        {
+            readEscapedStringUntilEOL(author, *buf);
+            *buf >> "\n";
+            continue;
+        }
+
+        String ignored;
+        readEscapedStringUntilEOL(ignored, *buf);
+        LOG_DEBUG(getLogger("MergeTreeMutationEntry"), "Skipping unknown field '{}' in mutation entry {}", ignored, file_name);
         if (!buf->eof())
         {
             *buf >> "csn: " >> csn >> "\n";
