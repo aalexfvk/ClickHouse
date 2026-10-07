@@ -47,6 +47,27 @@ TEST_CASES = {
     "test_user_2": {"response": {}},
     "test_user_3": {"response": ""},
     "test_user_4": {"response": "not json string"},
+    "test_extra_legacy": {
+        "response": {
+            "settings": {
+                "auth_str": "'legacy'",
+                "auth_num": "UInt64_15",
+                "auth_array": "Array_[Int64_1, Int64_2]",
+                "max_threads": "4",
+            }
+        },
+        "dump_settings": {
+            "auth_str": "'legacy'",
+            "auth_num": "UInt64_15",
+            "auth_array": "Array_[Int64_1, Int64_2]",
+        },
+        "get_settings": {
+            "auth_str": "legacy",
+            "auth_num": "15",
+            "auth_array": "[1,2]",
+            "max_threads": "4",
+        },
+    },
     **{
         user: {
             "response": {"settings": {"auth_a": 100, key: value}},

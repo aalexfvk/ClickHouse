@@ -16,13 +16,22 @@ extern const int BAD_ARGUMENTS;
 
 namespace
 {
-Field jsonValueToField(const Poco::Dynamic::Var & json_value)
+Field jsonValueToField(const String & setting_name, const Poco::Dynamic::Var & json_value)
 {
     if (json_value.isBoolean())
         return Field{json_value.extract<bool>()};
 
     if (json_value.isString())
-        return Field{json_value.extract<String>()};
+    {
+        try
+        {
+            return settingStringToValueUtil(setting_name, json_value.extract<String>());
+        }
+        catch (const Exception &)
+        {
+            return Field{json_value.extract<String>()};
+        }
+    }
 
     if (json_value.isInteger())
     {
@@ -66,7 +75,7 @@ SettingsAuthResponseParser::parse(const Poco::Net::HTTPResponse & response, std:
         {
             try
             {
-                Field field_value = jsonValueToField(value);
+                Field field_value = jsonValueToField(key, value);
                 Field setting_value = settingCastValueUtil(key, field_value);
                 result.settings.emplace_back(key, setting_value);
             }
