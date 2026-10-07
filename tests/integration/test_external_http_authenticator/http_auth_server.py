@@ -15,6 +15,11 @@ TEST_CASES = {
                 "auth_float": 100.1,
                 "auth_null": None,
                 "auth_bool": True,
+                "auth_false": False,
+                "auth_int_min": -(1 << 63),
+                "auth_uint_max": (1 << 64) - 1,
+                "max_threads": 4,
+                "optimize_move_to_prewhere": False,
             }
         },
         "dump_settings": {
@@ -24,6 +29,9 @@ TEST_CASES = {
             "auth_float": "Float64_100.1",
             "auth_null": "NULL",
             "auth_bool": "Bool_1",
+            "auth_false": "Bool_0",
+            "auth_int_min": "Int64_-9223372036854775808",
+            "auth_uint_max": "UInt64_18446744073709551615",
         },
         "get_settings": {
             "auth_str": "test_user",
@@ -32,12 +40,29 @@ TEST_CASES = {
             "auth_float": "100.1",
             "auth_null": "\\N",
             "auth_bool": "true",
+            "auth_false": "false",
+            "auth_int_min": "-9223372036854775808",
+            "auth_uint_max": "18446744073709551615",
+            "max_threads": "4",
+            "optimize_move_to_prewhere": "false",
         },
     },
     "test_user_2": {"response": {}},
     "test_user_3": {"response": ""},
     "test_user_4": {"response": "not json string"},
-    "test_user_5": {"response": {"settings": {"unexpected_nested_object": {}}}},
+    **{
+        user: {
+            "response": {"settings": {"auth_a": 100, key: value}},
+            "absent_settings": ["auth_a"],
+        }
+        for user, (key, value) in {
+            "test_user_5": ("auth_z", {}),
+            "test_extra_array": ("auth_z", []),
+            "test_extra_bad_setting": ("max_threads", "abc"),
+            "test_extra_uint_overflow": ("auth_z", 1 << 64),
+            "test_extra_int_underflow": ("auth_z", -(1 << 63) - 1),
+        }.items()
+    },
 }
 
 

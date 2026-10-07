@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <bitset>
 #include <functional>
+#include <optional>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
@@ -494,10 +495,10 @@ Field castValueOfSetting(const String & name, const Field & value)
         return SettingsT::castValueUtil(name, value);
 }
 
-/// Casts `change.value` to the setting's declared type and returns the result. Returns Null if we should skip the setting: either because
+/// Casts `change.value` to the setting's declared type and returns the result. Returns `std::nullopt` if we should skip the setting: either because
 /// the value is unchanged (when `ignore_unchanged_settings` is false) or because the cast failed (when `throw_on_failure` is false).
 template <typename SettingsT>
-Field getNewValueToCheck(const SettingsT & current_settings, const SettingChange & change, bool ignore_unchanged_settings, bool throw_on_failure)
+std::optional<Field> getNewValueToCheck(const SettingsT & current_settings, const SettingChange & change, bool ignore_unchanged_settings, bool throw_on_failure)
 {
     Field current_value;
     bool has_current_value = getCurrentValueOfSetting(current_settings, change.name, current_value);
@@ -576,8 +577,8 @@ bool SettingsConstraints::checkImpl(const Settings & current_settings,
     else if (!access_control->isSettingNameAllowed(setting_name))
         return false;
 
-    Field new_value = getNewValueToCheck(current_settings, change, ignore_unchanged_settings, reaction == THROW_ON_VIOLATION);
-    if (new_value.isNull())
+    auto new_value = getNewValueToCheck(current_settings, change, ignore_unchanged_settings, reaction == THROW_ON_VIOLATION);
+    if (!new_value)
         return false;
 
     if (ignore_unchanged_settings)
@@ -587,11 +588,11 @@ bool SettingsConstraints::checkImpl(const Settings & current_settings,
         /// `CREATE SETTINGS PROFILE`.
         Field current_value;
         if (getCurrentValueOfSetting(current_settings, change.name, current_value)
-            && new_value == castValueOfSetting<Settings>(change.name, current_value))
+            && *new_value == castValueOfSetting<Settings>(change.name, current_value))
             return true;
     }
 
-    if (isChangeDisablingTheAnalyzer(setting_name, new_value))
+    if (isChangeDisablingTheAnalyzer(setting_name, *new_value))
     {
         /// Store the only supported value instead of the requested one. Other constraints are not
         /// consulted: the value that ends up stored is the default one. `executeQuery` normalizes the
@@ -601,7 +602,7 @@ bool SettingsConstraints::checkImpl(const Settings & current_settings,
         return true;
     }
 
-    return getChecker(current_settings, setting_name).check(change, new_value, reaction, source, actor_is_config_defined);
+    return getChecker(current_settings, setting_name).check(change, *new_value, reaction, source, actor_is_config_defined);
 }
 
 bool SettingsConstraints::checkImpl(const MergeTreeSettings & current_settings, SettingChange & change, ReactionOnViolation reaction) const
@@ -611,18 +612,18 @@ bool SettingsConstraints::checkImpl(const MergeTreeSettings & current_settings, 
     /// because the constraint lookup is a plain hashmap lookup on the (still un-resolved) name.
     std::string_view setting_name = MergeTreeSettings::resolveName(change.name);
 
-    Field new_value = getNewValueToCheck(current_settings, change, /*ignore_unchanged_settings=*/false, reaction == THROW_ON_VIOLATION);
-    if (new_value.isNull())
+    auto new_value = getNewValueToCheck(current_settings, change, /*ignore_unchanged_settings=*/false, reaction == THROW_ON_VIOLATION);
+    if (!new_value)
         return false;
 
     if (access_control && isAnyFeatureTierRestricted(*access_control))
     {
         auto tier = MergeTreeSettings::tryGetTierOfBuiltin(setting_name).value_or(SettingsTierType::PRODUCTION);
         if (auto reason = getFeatureTierRestriction(*access_control, setting_name, tier))
-            return Checker(*reason, ErrorCodes::READONLY).check(change, new_value, reaction, SettingSource::QUERY);
+            return Checker(*reason, ErrorCodes::READONLY).check(change, *new_value, reaction, SettingSource::QUERY);
     }
 
-    return getMergeTreeChecker(setting_name).check(change, new_value, reaction, SettingSource::QUERY);
+    return getMergeTreeChecker(setting_name).check(change, *new_value, reaction, SettingSource::QUERY);
 }
 
 bool SettingsConstraints::Checker::check(SettingChange & change,

@@ -73,13 +73,10 @@ SettingsAuthResponseParser::parse(const Poco::Net::HTTPResponse & response, std:
                 Field setting_value = settingCastValueUtil(key, field_value);
                 result.settings.emplace_back(key, setting_value);
             }
-            catch (...)
+            catch (Exception & e)
             {
-                throw Exception(
-                    ErrorCodes::BAD_ARGUMENTS,
-                    "Failed to parse setting '{}' with an error:\n{}",
-                    key,
-                    getCurrentExceptionMessage(/* with_stacktrace */ true));
+                e.addMessage("while parsing setting '{}' from HTTP authentication response", key);
+                throw;
             }
         }
     }

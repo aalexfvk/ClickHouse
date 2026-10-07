@@ -119,6 +119,10 @@ def test_session_settings_from_auth_response(started_cluster: ClickHouseCluster)
     for user, case in TEST_CASES.items():
         query_id = f"test_query_{user}"
         password = "good_password"
+        if user.startswith("test_extra_"):
+            instance.query(
+                f"CREATE USER IF NOT EXISTS {user} IDENTIFIED WITH HTTP SERVER 'basic_server' SCHEME 'Basic'"
+            )
 
         assert (
             instance.query(
@@ -132,7 +136,7 @@ def test_session_settings_from_auth_response(started_cluster: ClickHouseCluster)
         instance.query("SYSTEM FLUSH LOGS")
 
         if isinstance(case, dict):
-            # Check getSetting()
+            # Check `getSetting`.
             for key, value in case.get("get_settings", {}).items():
                 assert (
                     instance.query(
@@ -141,7 +145,7 @@ def test_session_settings_from_auth_response(started_cluster: ClickHouseCluster)
                     == value
                 )
 
-            # Check system.settings
+            # Check `system.settings`.
             for key, value in case.get("dump_settings", {}).items():
                 assert (
                     instance.query(
@@ -152,7 +156,7 @@ def test_session_settings_from_auth_response(started_cluster: ClickHouseCluster)
                     == f"{key}\t{value}\tCustom"
                 )
 
-            # Check system.query_log
+            # Check `system.query_log`.
             res = instance.query(
                 f"select Settings from system.query_log where type = 'QueryFinish' and query_id = '{query_id}' FORMAT JSON"
             )
@@ -161,3 +165,11 @@ def test_session_settings_from_auth_response(started_cluster: ClickHouseCluster)
 
             for key, value in case.get("dump_settings", {}).items():
                 assert query_settings.get(key) == value
+
+            for key in case.get("absent_settings", []):
+                assert key not in query_settings
+                assert instance.query(
+                    f"SELECT getSettingOrDefault('{key}', 'missing')",
+                    user=user,
+                    password=password,
+                ) == "missing\n"
