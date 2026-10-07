@@ -11,12 +11,15 @@ namespace DB
 
 ASTPtr ASTCreateNamedCollectionQuery::clone() const
 {
-    return std::make_shared<ASTCreateNamedCollectionQuery>(*this);
+    return make_intrusive<ASTCreateNamedCollectionQuery>(*this);
 }
 
 void ASTCreateNamedCollectionQuery::formatImpl(WriteBuffer & ostr, const IAST::FormatSettings & settings, IAST::FormatState &, IAST::FormatStateStacked) const
 {
-    ostr << "CREATE NAMED COLLECTION ";
+    ostr << "CREATE ";
+    if (or_replace)
+        ostr << "OR REPLACE ";
+    ostr << "NAMED COLLECTION ";
     if (if_not_exists)
         ostr << "IF NOT EXISTS ";
     ostr << backQuoteIfNeed(collection_name);
