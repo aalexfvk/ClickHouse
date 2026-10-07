@@ -18,9 +18,6 @@ namespace
 {
 Field jsonValueToField(const Poco::Dynamic::Var & json_value)
 {
-    if (json_value.isEmpty())
-        return Field{};
-
     if (json_value.isBoolean())
         return Field{json_value.extract<bool>()};
 
